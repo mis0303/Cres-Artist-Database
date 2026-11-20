@@ -54,8 +54,12 @@ function doGet() {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-/** Called by the frontend. */
-function getArtists() {
+/** Called by the frontend. force=true skips the cache (Refresh button). */
+function getArtists(force) {
+  if (!force) {
+    const hit = cacheGet_();
+    if (hit) { hit.cached = true; return hit; }
+  }
   const ss = getSS_();
   const out = [];
   const missing = [];
@@ -63,30 +67,90 @@ function getArtists() {
     const sh = ss.getSheetByName(cfg.tab);
     if (!sh) { missing.push(cfg.tab); return; }
     const values = sh.getDataRange().getDisplayValues();
-    const links = readRichLinks_(sh);
+    const links = readRichLinks_(sh, values);
     out.push.apply(out, normalizeTab_(values, cfg, sh.getSheetId(), links));
   });
-  return {
+  const res = {
     artists: out,
     missingTabs: missing,
     sheetName: ss.getName(),
     sheetUrl: ss.getUrl(),
     loadedAt: new Date().toISOString(),
   };
+  cachePut_(res);
+  return res;
 }
 
-/** Also pick up hyperlinks hidden behind cell text (chips / rich text). */
-function readRichLinks_(sh) {
+/**
+ * Hyperlinks hidden behind cell text (chips / rich text).
+ * Reading rich text is slow, so: only the Link column, and only if some
+ * link cell has text that isn't already a URL.
+ */
+function readRichLinks_(sh, values) {
   const map = {};
   try {
-    const rt = sh.getDataRange().getRichTextValues();
-    rt.forEach((row, r) => row.forEach((cell, c) => {
-      const u = cell && cell.getLinkUrl && cell.getLinkUrl();
+    const hm = mapHeader_(values);
+    if (!hm || hm.col.link === undefined) return map;
+    const c = hm.col.link;
+    let needed = false;
+    for (let r = hm.h + 1; r < values.length; r++) {
+      const v = String(values[r][c] || '').trim();
+      if (v && !/^https?:\/\//i.test(v)) { needed = true; break; }
+    }
+    if (!needed) return map;
+    const rt = sh.getRange(1, c + 1, values.length, 1).getRichTextValues();
+    rt.forEach((row, r) => {
+      const u = row[0] && row[0].getLinkUrl && row[0].getLinkUrl();
       if (u) map[r + ':' + c] = u;
-    }));
+    });
   } catch (e) { /* ignore — plain text links still work */ }
   return map;
 }
+
+/* ============================ CACHE ============================ */
+// Artist list is kept in the script cache for CACHE_MINUTES so the portal opens fast.
+// It is cleared automatically when someone edits the sheet (onEdit below)
+// or adds an artist from the portal. The Refresh button always reads fresh.
+const CACHE_MINUTES = 10;
+const CACHE_KEY = 'artists_v2';
+const CHUNK = 90000; // CacheService allows ~100KB per key
+
+function cachePut_(obj) {
+  try {
+    const s = JSON.stringify(obj);
+    const parts = {};
+    const n = Math.ceil(s.length / CHUNK);
+    for (let i = 0; i < n; i++) parts[CACHE_KEY + '_' + i] = s.slice(i * CHUNK, (i + 1) * CHUNK);
+    parts[CACHE_KEY + '_n'] = String(n);
+    CacheService.getScriptCache().putAll(parts, CACHE_MINUTES * 60);
+  } catch (e) { /* cache is only a speed-up */ }
+}
+
+function cacheGet_() {
+  try {
+    const cache = CacheService.getScriptCache();
+    const n = parseInt(cache.get(CACHE_KEY + '_n'), 10);
+    if (!n) return null;
+    const keys = [];
+    for (let i = 0; i < n; i++) keys.push(CACHE_KEY + '_' + i);
+    const got = cache.getAll(keys);
+    let s = '';
+    for (const k of keys) { if (got[k] == null) return null; s += got[k]; }
+    return JSON.parse(s);
+  } catch (e) { return null; }
+}
+
+function clearArtistCache_() {
+  try { CacheService.getScriptCache().remove(CACHE_KEY + '_n'); } catch (e) {}
+}
+
+/**
+ * Simple trigger: any edit in the sheet clears the cache, so the next
+ * portal load shows the change. Works when this script is created from
+ * inside the sheet (Extensions → Apps Script). For a standalone script the
+ * cache simply expires after CACHE_MINUTES.
+ */
+function onEdit(e) { clearArtistCache_(); }
 
 /* ===================== NORMALISATION (pure JS) ===================== */
 
@@ -426,6 +490,7 @@ function addArtist(payload) {
     const when = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'dd/MM/yyyy HH:mm');
     sh.getRange(plan.targetRow, plan.nameCol + 1).setNote('Added via Artist Finder' + (who ? ' by ' + who : '') + ' on ' + when);
 
+    clearArtistCache_();
     return { ok: true, tab: cfg.tab, row: plan.targetRow, gid: sh.getSheetId(), srno: plan.srno, nameCol: plan.nameCol + 1 };
   } finally {
     lock.releaseLock();

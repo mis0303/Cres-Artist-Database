@@ -177,22 +177,48 @@ const showPhone = p => /^91\d{10}$/.test(p) ? p.slice(2, 7) + ' ' + p.slice(7) :
 const cellLink = (gid, row, col) => SHEET_URL.split('#')[0].replace(/\?.*$/, '') + '#gid=' + gid + '&range=' + colLetter(col) + row;
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-function load() {
-  $('loading').style.display = 'block';
-  $('grid').innerHTML = '';
+// Last loaded data is kept on this device so the portal shows instantly next time,
+// then fresh data from the sheet replaces it a moment later.
+const LOCAL_KEY = 'cresArtistsCache_v2';
+let FIRST_PAINT = true;
+
+function applyData(res, fromDevice) {
+  ALL = res.artists; SHEET_URL = res.sheetUrl;
+  $('openSheet').href = SHEET_URL;
+  const t = new Date(res.loadedAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  $('meta').textContent = (res.sheetName ? res.sheetName + ' · ' : '')
+    + (fromDevice ? 'updating… (showing ' + t + ')' : 'updated ' + t)
+    + (res.missingTabs && res.missingTabs.length ? ' · ⚠ tab not found: ' + res.missingTabs.join(', ') : '');
+  $('loading').style.display = 'none';
+  buildFilters(); render();
+  if (FIRST_PAINT) {
+    FIRST_PAINT = false;
+    // Tell the installable app (GitHub Pages wrapper) that data is on screen
+    try { window.top.postMessage({ cres: 'artist-finder-ready' }, '*'); } catch (e) {}
+    // Warm up the Add-artist form in the background so it opens instantly
+    setTimeout(() => { if (!SCHEMA) google.script.run.withSuccessHandler(s => { if (!SCHEMA) SCHEMA = s; }).getFormSchema(); }, 1500);
+  }
+}
+
+function load(force) {
+  if (!ALL.length) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(LOCAL_KEY) || 'null'); } catch (e) {}
+    if (saved && saved.artists) applyData(saved, true);
+    else $('loading').style.display = 'block';
+  } else {
+    $('meta').textContent = 'Refreshing…';
+  }
   google.script.run
     .withSuccessHandler(res => {
-      ALL = res.artists; SHEET_URL = res.sheetUrl;
-      $('openSheet').href = SHEET_URL;
-      $('meta').textContent = (res.sheetName ? res.sheetName + ' · ' : '') + 'live · ' + new Date(res.loadedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})
-        + (res.missingTabs.length ? ' · ⚠ tab not found: ' + res.missingTabs.join(', ') : '');
-      $('loading').style.display = 'none';
-      buildFilters(); render();
-      // Tell the installable app (GitHub Pages wrapper) that data loaded fine
-      try { window.top.postMessage({ cres: 'artist-finder-ready' }, '*'); } catch (e) {}
+      applyData(res, false);
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify(res)); } catch (e) {}
     })
-    .withFailureHandler(err => { $('loading').textContent = 'Could not load: ' + err.message; })
-    .getArtists();
+    .withFailureHandler(err => {
+      if (ALL.length) $('meta').textContent = 'Could not refresh: ' + err.message;
+      else $('loading').textContent = 'Could not load: ' + err.message;
+    })
+    .getArtists(!!force);
 }
 
 function buildFilters() {
@@ -333,7 +359,7 @@ $('grid').addEventListener('click', e => {
   updateBar();
 });
 $('reset').onclick = () => { $('q').value = ''; ['city', 'budget', 'status', 'has'].forEach(id => $(id).value = ''); $('sort').value = 'sheet'; CAT = ''; ONLY_SEL = false; render(); };
-$('refresh').onclick = load;
+$('refresh').onclick = () => load(true);
 $('copyWa').onclick = () => copy(shortlistText(false));
 $('copyInt').onclick = () => copy(shortlistText(true));
 $('showSel').onclick = () => { ONLY_SEL = !ONLY_SEL; render(); };
@@ -499,7 +525,7 @@ function save(force) {
       JUST_ADDED = res.gid + '-' + res.row;
       SCHEMA = null; // reload next time so new city/type suggestions show up
       CAT = cat; $('q').value = data.name || data.company;
-      load();
+      load(true);
     })
     .withFailureHandler(e => { $('addSave').disabled = false; showMsg('err', 'Could not save: ' + esc(e.message)); })
     .addArtist({ cat: cat, data: data, force: !!force });

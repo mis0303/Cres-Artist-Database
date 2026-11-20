@@ -49,6 +49,13 @@ Installable app (GitHub Pages) ← index.html + manifest.json + sw.js + icons/
 Saving alone does **not** update the live link — always deploy a *New version*.
 Using "New version" keeps the same URL, so the app needs no change.
 
+## Speed
+
+- The artist list is cached on the server for 10 minutes (`CACHE_MINUTES` in `Code.gs`).
+- Any edit in the sheet clears that cache (`onEdit`, works when the script is created from inside the sheet), and so does adding an artist from the portal.
+- **↻ Refresh** always reads the sheet fresh.
+- Each device also remembers the last list, so the portal shows it instantly and swaps in fresh data a moment later.
+
 ## Sheet structure the portal expects
 
 Tabs are listed in `TABS` at the top of `Code.gs`:

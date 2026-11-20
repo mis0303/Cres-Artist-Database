@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CRES Artist Finder</title>
+<meta name="description" content="Search, shortlist and add artists from the CRES artist master database.">
+<meta name="theme-color" content="#1d1b18">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Artist Finder">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<style>
+  html,body{margin:0;height:100%;background:#f5f3ef;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1d1b18}
+  #app{position:fixed;inset:0;width:100%;height:100%;border:0;display:block}
+  #splash{position:fixed;inset:0;background:#1d1b18;color:#f5f3ef;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .35s;z-index:2;padding:24px;text-align:center}
+  #splash.hide{opacity:0;pointer-events:none}
+  #splash img{width:96px;height:96px;border-radius:22px}
+  #splash h1{margin:0;font-size:20px;font-weight:650;letter-spacing:-.2px}
+  #splash h1 b{color:#e0693c}
+  .spin{width:26px;height:26px;border:3px solid #3a3631;border-top-color:#e0693c;border-radius:50%;animation:s 0.9s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  #help{display:none;max-width:340px;font-size:13px;color:#cfc9bf}
+  #help.show{display:block}
+  #help a{display:inline-block;margin-top:10px;background:#e0693c;color:#fff;text-decoration:none;padding:9px 14px;border-radius:8px;font-weight:600}
+  #help small{display:block;margin-top:10px;color:#8f897f}
+</style>
+</head>
+<body>
+  <div id="splash">
+    <img src="icons/icon-192.png" alt="">
+    <h1><b>CRES</b> Artist Finder</h1>
+    <div class="spin" id="spin"></div>
+    <div id="help">
+      <span id="helpText">Taking longer than usual.</span><br>
+      Make sure you are signed in to Google with your <b>creativerays.in</b> account.
+      <br><a id="openDirect" target="_blank" rel="noopener">Open in browser</a>
+      <small>Tip: after signing in once, reopen the app. · <a href="#" id="continueAnyway" style="background:none;padding:0;margin:0;color:#8f897f;text-decoration:underline;font-weight:400">Continue anyway</a></small>
+    </div>
+  </div>
+
+  <iframe id="app" title="CRES Artist Finder" allow="clipboard-write" referrerpolicy="no-referrer-when-downgrade"></iframe>
+
+<script>
+  // ─────────────────────────────────────────────────────────────
+  //  The live Apps Script web app. If you redeploy as a NEW
+  //  deployment (new URL), update it here. Updating an existing
+  //  deployment ("New version") keeps the same URL — no change needed.
+  // ─────────────────────────────────────────────────────────────
+  const APP_URL = 'https://script.google.com/macros/s/AKfycbwDl-E1xqgMJOFlKBDiMOOHkLRwR1uRXdYG10EH2X2KFnGS9gTh59kGi3lg6wcPPPkE3g/exec';
+
+  const frame = document.getElementById('app');
+  const splash = document.getElementById('splash');
+  const help = document.getElementById('help');
+  document.getElementById('openDirect').href = APP_URL;
+
+  if (!navigator.onLine) {
+    document.getElementById('helpText').textContent = 'You are offline. Artist data is live from the sheet, so an internet connection is needed.';
+    help.classList.add('show');
+    document.getElementById('spin').style.display = 'none';
+  }
+
+  frame.src = APP_URL;
+  // The portal posts 'artist-finder-ready' once artist data has loaded.
+  // (The iframe 'load' event can't be trusted: it also fires on Google's
+  //  sign-in / error pages, which can't be shown inside the app.)
+  window.addEventListener('message', e => {
+    if (e.data && e.data.cres === 'artist-finder-ready') {
+      splash.classList.add('hide');
+      help.classList.remove('show');
+    }
+  });
+  // No "ready" after a while -> probably needs Google sign-in. Offer to open it directly.
+  setTimeout(() => { if (!splash.classList.contains('hide')) help.classList.add('show'); }, 12000);
+  document.getElementById('continueAnyway').onclick = e => { e.preventDefault(); splash.classList.add('hide'); };
+
+  window.addEventListener('online', () => location.reload());
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRES Artist Finder</title>
+<style>
+  :root{
+    --bg:#f5f3ef; --card:#fff; --ink:#1d1b18; --mut:#6d6860; --line:#e4e0d8;
+    --acc:#b8461f; --acc2:#fbeee8; --ok:#2f7d4f; --okbg:#e6f3ea; --warn:#a66a00; --warnbg:#fdf2dc;
+    --grey:#8a857c; --greybg:#efede8; --r:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:14px 18px 10px}
+  .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  h1{font-size:18px;margin:0;letter-spacing:-.2px}
+  h1 b{color:var(--acc)}
+  .meta{color:var(--mut);font-size:12px;margin-left:auto}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 11px;font:inherit;cursor:pointer;color:var(--ink);text-decoration:none;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+  .btn:hover{border-color:var(--ink)}
+  .btn.pri{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .search{flex:1;min-width:220px;display:flex;margin-top:10px}
+  .search input{width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;font:inherit;font-size:15px;background:#fff}
+  .search input:focus{outline:2px solid var(--acc);border-color:transparent}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 11px;cursor:pointer;font-size:13px;user-select:none}
+  .chip span{color:var(--mut);margin-left:4px;font-size:12px}
+  .chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .chip.on span{color:#cfcac2}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+  select{padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}
+  .count{color:var(--mut);font-size:13px;margin-left:auto}
+  main{padding:16px 18px 110px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px 12px;display:flex;flex-direction:column;gap:8px;position:relative}
+  .card.sel{outline:2px solid var(--acc);border-color:transparent}
+  .row1{display:flex;align-items:flex-start;gap:8px}
+  .nm{font-weight:650;font-size:15px;line-height:1.25}
+  .sub{color:var(--mut);font-size:12.5px}
+  .tag{font-size:11px;padding:2px 7px;border-radius:999px;background:var(--acc2);color:var(--acc);white-space:nowrap}
+  .pick{margin-left:auto;border:1px solid var(--line);background:#fff;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:16px;line-height:1;flex:none}
+  .card.sel .pick{background:var(--acc);color:#fff;border-color:var(--acc)}
+  .facts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .cost{font-weight:600;font-size:13px}
+  .cost.none{color:var(--grey);font-weight:400}
+  .st{font-size:11px;padding:2px 7px;border-radius:5px}
+  .st.verified{background:var(--okbg);color:var(--ok)}
+  .st.followup{background:var(--warnbg);color:var(--warn)}
+  .st.nocost,.st.unverified{background:var(--greybg);color:var(--grey)}
+  .rem{font-size:12px;color:var(--mut);border-left:2px solid var(--line);padding-left:7px}
+  .acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto;padding-top:4px}
+  .acts .btn{padding:5px 9px;font-size:12.5px}
+  .acts .btn.dim{color:var(--grey);pointer-events:none;border-style:dashed}
+  .ph{font-size:12.5px;font-variant-numeric:tabular-nums}
+  .empty,.loading{text-align:center;color:var(--mut);padding:60px 10px}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:var(--ink);color:#fff;padding:12px 18px;display:none;align-items:center;gap:10px;z-index:9;flex-wrap:wrap}
+  .bar.show{display:flex}
+  .bar .btn{background:transparent;color:#fff;border-color:#55514b}
+  .bar .btn.pri{background:var(--acc);border-color:var(--acc)}
+  .toast{position:fixed;bottom:76px;left:50%;transform:translateX(-50%);background:#000;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:10}
+  .toast.show{opacity:1}
+  .modal{position:fixed;inset:0;background:rgba(20,18,15,.45);display:none;align-items:flex-start;justify-content:center;z-index:20;overflow:auto;padding:30px 12px}
+  .modal.show{display:flex}
+  .sheet{background:#fff;border-radius:14px;width:100%;max-width:560px;padding:18px 18px 16px;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+  .sheet h2{margin:0 0 4px;font-size:17px}
+  .sheet .hint{color:var(--mut);font-size:12px;margin:0 0 12px}
+  .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+  .f{display:flex;flex-direction:column;gap:4px}
+  .f.wide{grid-column:1/-1}
+  .f label{font-size:12px;color:var(--mut)}
+  .f label b{color:var(--ink);font-weight:600}
+  .f input,.f textarea,.f select{padding:9px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;width:100%;background:#fff}
+  .f textarea{min-height:60px;resize:vertical}
+  .f input:focus,.f textarea:focus,.f select:focus{outline:2px solid var(--acc);border-color:transparent}
+  .f small{color:var(--grey);font-size:11px}
+  .f small.tip{min-height:15px;display:block}   /* space reserved so buttons don't jump */
+  .f.bad input{border-color:#c0392b}
+  .mact{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap;align-items:center}
+  .msg{font-size:13px;padding:9px 11px;border-radius:8px;margin-top:12px;display:none}
+  .msg.show{display:block}
+  .msg.warn{background:var(--warnbg);color:#6b4500}
+  .msg.err{background:#fbe5e1;color:#8a2a17}
+  .msg.ok{background:var(--okbg);color:#1f5a37}
+  .msg a{color:inherit;font-weight:600}
+  .card.new{animation:pulse 2.2s ease-out}
+  @keyframes pulse{0%{box-shadow:0 0 0 4px var(--acc)}100%{box-shadow:0 0 0 0 transparent}}
+  @media (max-width:600px){.fgrid{grid-template-columns:1fr}}
+  @media (max-width:600px){header{padding:12px;position:static}main{padding:12px 12px 120px}.meta{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <h1><b>CRES</b> Artist Finder</h1>
+    <span class="meta" id="meta"></span>
+    <button class="btn pri" id="addBtn">+ Add artist</button>
+    <button class="btn" id="refresh" title="Reload latest data from the sheet">↻ Refresh</button>
+    <a class="btn" id="openSheet" target="_blank">Open sheet ↗</a>
+  </div>
+  <div class="search"><input id="q" placeholder="Search name, band, city, act type, remarks…" autocomplete="off"></div>
+  <div class="chips" id="cats"></div>
+  <div class="filters">
+    <select id="city"><option value="">All cities</option></select>
+    <select id="budget">
+      <option value="">Any budget</option>
+      <option value="0-25000">Up to ₹25K</option>
+      <option value="25000-50000">₹25K – 50K</option>
+      <option value="50000-100000">₹50K – 1L</option>
+      <option value="100000-1e12">₹1L +</option>
+      <option value="none">Cost not set</option>
+    </select>
+    <select id="status">
+      <option value="">Any status</option>
+      <option value="verified">✓ Cost updated 2026</option>
+      <option value="followup">Needs follow-up</option>
+      <option value="unverified">Cost given, not dated</option>
+      <option value="nocost">No cost / no remark</option>
+    </select>
+    <select id="has">
+      <option value="">Phone / link: any</option>
+      <option value="phone">Has phone</option>
+      <option value="link">Has profile link</option>
+    </select>
+    <select id="sort">
+      <option value="sheet">Sheet order</option>
+      <option value="name">Name A–Z</option>
+      <option value="costAsc">Cost low → high</option>
+      <option value="costDesc">Cost high → low</option>
+    </select>
+    <button class="btn" id="reset">Clear filters</button>
+    <span class="count" id="count"></span>
+  </div>
+</header>
+
+<main>
+  <div class="loading" id="loading">Loading artists from the sheet…</div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" style="display:none">No matches. Try clearing the filters.</div>
+</main>
+
+<div class="bar" id="bar">
+  <b id="selN">0</b> shortlisted
+  <button class="btn pri" id="copyWa">Copy for WhatsApp / mail</button>
+  <button class="btn" id="copyInt">Copy with contacts (internal)</button>
+  <button class="btn" id="showSel">Show only shortlist</button>
+  <button class="btn" id="clearSel">Clear</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<div class="modal" id="addModal">
+  <form class="sheet" id="addForm" autocomplete="off">
+    <h2>Add new artist</h2>
+    <p class="hint" id="addHint">Pick a category — the form adapts to that tab's columns. The entry is added below the last artist in that tab.</p>
+    <div class="f wide"><label><b>Category / Tab</b></label><select id="fCat" required></select></div>
+    <div class="fgrid" id="fFields" style="margin-top:10px"></div>
+    <div class="msg" id="addMsg"></div>
+    <div class="mact">
+      <button type="button" class="btn" id="addCancel">Cancel</button>
+      <button type="button" class="btn" id="addForce" style="display:none">Yes, add anyway</button>
+      <button type="submit" class="btn pri" id="addSave">Save to sheet</button>
+    </div>
+  </form>
+</div>
+
+<script>
+let ALL = [], SHEET_URL = '', CAT = '', ONLY_SEL = false, JUST_ADDED = '';
+let SEL = new Set();
+try { SEL = new Set(JSON.parse(localStorage.getItem('cresShortlist') || '[]')); } catch (e) {}
+const $ = id => document.getElementById(id);
+// 1 -> A, 4 -> D, 27 -> AA
+const colLetter = n => { let s = ''; n = n || 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+// Sheet link that opens straight at that cell (e.g. Standup!D133)
+// "919820123456" -> "98201 23456",  "971501234567" -> "+971501234567"
+const showPhone = p => /^91\d{10}$/.test(p) ? p.slice(2, 7) + ' ' + p.slice(7) : '+' + p;
+const cellLink = (gid, row, col) => SHEET_URL.split('#')[0].replace(/\?.*$/, '') + '#gid=' + gid + '&range=' + colLetter(col) + row;
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function load() {
+  $('loading').style.display = 'block';
+  $('grid').innerHTML = '';
+  google.script.run
+    .withSuccessHandler(res => {
+      ALL = res.artists; SHEET_URL = res.sheetUrl;
+      $('openSheet').href = SHEET_URL;
+      $('meta').textContent = (res.sheetName ? res.sheetName + ' · ' : '') + 'live · ' + new Date(res.loadedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})
+        + (res.missingTabs.length ? ' · ⚠ tab not found: ' + res.missingTabs.join(', ') : '');
+      $('loading').style.display = 'none';
+      buildFilters(); render();
+      // Tell the installable app (GitHub Pages wrapper) that data loaded fine
+      try { window.top.postMessage({ cres: 'artist-finder-ready' }, '*'); } catch (e) {}
+    })
+    .withFailureHandler(err => { $('loading').textContent = 'Could not load: ' + err.message; })
+    .getArtists();
+}
+
+function buildFilters() {
+  const cats = {};
+  ALL.forEach(a => cats[a.cat] = (cats[a.cat] || 0) + 1);
+  $('cats').innerHTML = ['<span class="chip' + (CAT ? '' : ' on') + '" data-c="">All<span>' + ALL.length + '</span></span>']
+    .concat(Object.keys(cats).map(c => '<span class="chip' + (CAT === c ? ' on' : '') + '" data-c="' + esc(c) + '">' + esc(c) + '<span>' + cats[c] + '</span></span>')).join('');
+  const cities = {};
+  ALL.forEach(a => a.cities.forEach(c => cities[c] = (cities[c] || 0) + 1));
+  const cur = $('city').value;
+  $('city').innerHTML = '<option value="">All cities</option>' + Object.keys(cities)
+    .sort((a, b) => cities[b] - cities[a]).map(c => '<option>' + esc(c) + '</option>').join('')
+    + '<option value="__none">City not set</option>';
+  $('city').value = cur;
+}
+
+const fmtK = n => n >= 100000 ? (n / 100000).toFixed(n % 100000 ? 1 : 0) + 'L' : Math.round(n / 1000) + 'K';
+const costLabel = a => a.costMin == null ? '' : '₹' + (a.costMin === a.costMax ? fmtK(a.costMin) : fmtK(a.costMin) + '–' + fmtK(a.costMax));
+const STATUS = { verified: '✓ Updated 2026', followup: 'Follow-up', unverified: 'Not dated', nocost: 'No info' };
+
+function filtered() {
+  const q = $('q').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const city = $('city').value, bud = $('budget').value, st = $('status').value, has = $('has').value;
+  let list = ALL.filter(a => {
+    if (ONLY_SEL && !SEL.has(a.id)) return false;
+    if (CAT && a.cat !== CAT) return false;
+    if (city === '__none' ? a.cities.length : city && a.cities.indexOf(city) < 0) return false;
+    if (st && a.status !== st) return false;
+    if (has === 'phone' && !a.phones.length && !a.managerPhones.length) return false;
+    if (has === 'link' && !a.link) return false;
+    if (bud === 'none') { if (a.costMin != null) return false; }
+    else if (bud) {
+      const [lo, hi] = bud.split('-').map(Number);
+      if (a.costMin == null || a.costMin > hi || a.costMax < lo) return false;
+    }
+    if (q.length) {
+      const hay = [a.name, a.company, a.city, a.type, a.language, a.cat, a.remarks, a.costRaw, a.extra, a.phoneRaw, a.managerRaw].join(' ').toLowerCase();
+      if (!q.every(w => hay.indexOf(w) >= 0)) return false;
+    }
+    return true;
+  });
+  const s = $('sort').value;
+  const big = 1e15;
+  if (s === 'name') list.sort((a, b) => a.name.localeCompare(b.name));
+  if (s === 'costAsc') list.sort((a, b) => (a.costMin ?? big) - (b.costMin ?? big));
+  if (s === 'costDesc') list.sort((a, b) => (b.costMax ?? -1) - (a.costMax ?? -1));
+  return list;
+}
+
+function linkBtn(a) {
+  if (!a.link) return '<span class="btn dim">No profile</span>';
+  const label = { slides: 'Profile slide', instagram: 'Instagram', youtube: 'YouTube', web: 'Link' }[a.linkType];
+  return '<a class="btn" target="_blank" href="' + esc(a.link) + '">' + label + ' ↗</a>';
+}
+
+function card(a) {
+  const sub = [a.company, a.type, a.language].filter(Boolean).map(esc).join(' · ');
+  const phone = a.phones[0] || a.managerPhones[0];
+  const who = a.phones[0] ? '' : (a.managerPhones[0] ? ' (manager)' : '');
+  const sheetLink = cellLink(a.gid, a.row, a.nameCol);
+  return '<div class="card' + (SEL.has(a.id) ? ' sel' : '') + '" data-id="' + a.id + '">'
+    + '<div class="row1"><div><div class="nm">' + esc(a.name) + '</div>'
+    + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>'
+    + '<button class="pick" data-pick="' + a.id + '" title="Shortlist">' + (SEL.has(a.id) ? '✓' : '+') + '</button></div>'
+    + '<div class="facts"><span class="tag">' + esc(a.cat) + '</span>'
+    + (a.city ? '<span class="sub">📍 ' + esc(a.city) + '</span>' : '')
+    + '<span class="st ' + a.status + '">' + STATUS[a.status] + '</span></div>'
+    + '<div class="facts">' + (a.costRaw ? '<span class="cost" title="' + esc(a.costRaw) + '">' + esc(costLabel(a) || a.costRaw) + '</span>'
+        + (costLabel(a) && a.costRaw.length > 8 ? '<span class="sub">' + esc(a.costRaw) + '</span>' : '')
+      : '<span class="cost none">Cost not set</span>') + '</div>'
+    + (a.managerRaw && a.phones.length ? '<div class="sub">Manager: ' + esc(a.managerRaw) + '</div>' : '')
+    + (a.managerRaw && !a.phones.length && !a.managerPhones.length ? '<div class="sub">Contact: ' + esc(a.managerRaw) + '</div>' : '')
+    + (a.remarks ? '<div class="rem">' + esc(a.remarks) + '</div>' : '')
+    + (a.extra ? '<div class="sub">Note: ' + esc(a.extra) + '</div>' : '')
+    + '<div class="acts">' + linkBtn(a)
+    + (phone ? '<a class="btn" href="tel:+' + phone + '">📞 ' + showPhone(phone) + who + '</a>'
+             + '<a class="btn" target="_blank" href="https://wa.me/' + phone + '">WhatsApp</a>'
+             : '<span class="btn dim">No number</span>')
+    + '<a class="btn" target="_blank" href="' + esc(sheetLink) + '" title="Opens the sheet at this artist&#39;s name cell — edit there">Edit ↗</a>'
+    + '</div></div>';
+}
+
+let renderTimer;
+function render() {
+  const list = filtered();
+  const MAX = 300;
+  $('grid').innerHTML = list.slice(0, MAX).map(card).join('');
+  if (JUST_ADDED) { const el = document.querySelector('.card[data-id="' + JUST_ADDED + '"]'); if (el) { el.classList.add('new'); el.scrollIntoView({block: 'center'}); } JUST_ADDED = ''; }
+  $('empty').style.display = list.length ? 'none' : 'block';
+  $('count').textContent = list.length + ' of ' + ALL.length + (list.length > MAX ? ' (showing first ' + MAX + ' — search to narrow)' : '');
+  document.querySelectorAll('#cats .chip').forEach(c => c.classList.toggle('on', c.dataset.c === CAT));
+  updateBar();
+}
+
+function updateBar() {
+  $('selN').textContent = SEL.size;
+  $('bar').classList.toggle('show', SEL.size > 0);
+  $('showSel').textContent = ONLY_SEL ? 'Show all' : 'Show only shortlist';
+  try { localStorage.setItem('cresShortlist', JSON.stringify([...SEL])); } catch (e) {}
+}
+
+function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 1600); }
+
+function copy(text) {
+  const done = () => toast('Copied ✓');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => fallback());
+  else fallback();
+  function fallback() { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); done(); }
+}
+
+function shortlistText(internal) {
+  const picked = ALL.filter(a => SEL.has(a.id));
+  const groups = {};
+  picked.forEach(a => (groups[a.cat] = groups[a.cat] || []).push(a));
+  let out = [];
+  Object.keys(groups).forEach(cat => {
+    out.push('*' + cat + '*');
+    groups[cat].forEach((a, i) => {
+      let line = (i + 1) + '. ' + a.name + (a.city ? ' (' + a.city + ')' : '');
+      if (internal) line += (a.costRaw ? ' — ' + a.costRaw : '') + (a.phones[0] || a.managerPhones[0] ? ' — ' + showPhone(a.phones[0] || a.managerPhones[0]) : '');
+      if (a.link) line += '\n   ' + a.link;
+      out.push(line);
+    });
+    out.push('');
+  });
+  return out.join('\n').trim();
+}
+
+// Events
+$('q').addEventListener('input', () => { clearTimeout(renderTimer); renderTimer = setTimeout(render, 120); });
+['city', 'budget', 'status', 'has', 'sort'].forEach(id => $(id).addEventListener('change', render));
+$('cats').addEventListener('click', e => { const c = e.target.closest('.chip'); if (!c) return; CAT = c.dataset.c; render(); });
+$('grid').addEventListener('click', e => {
+  const b = e.target.closest('[data-pick]'); if (!b) return;
+  const id = b.dataset.pick;
+  SEL.has(id) ? SEL.delete(id) : SEL.add(id);
+  const cardEl = b.closest('.card'); cardEl.classList.toggle('sel', SEL.has(id)); b.textContent = SEL.has(id) ? '✓' : '+';
+  updateBar();
+});
+$('reset').onclick = () => { $('q').value = ''; ['city', 'budget', 'status', 'has'].forEach(id => $(id).value = ''); $('sort').value = 'sheet'; CAT = ''; ONLY_SEL = false; render(); };
+$('refresh').onclick = load;
+$('copyWa').onclick = () => copy(shortlistText(false));
+$('copyInt').onclick = () => copy(shortlistText(true));
+$('showSel').onclick = () => { ONLY_SEL = !ONLY_SEL; render(); };
+$('clearSel').onclick = () => { SEL.clear(); ONLY_SEL = false; render(); };
+document.addEventListener('keydown', e => { if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { e.preventDefault(); $('q').focus(); } });
+
+/* ===================== ADD ARTIST ===================== */
+let SCHEMA = null;
+const FIELD_ORDER = ['name','company','type','language','city','phone','phone2','manager','cost','link','remarks'];
+const FIELD_HELP = {
+  name: 'Artist name', company: 'Band / company / agency',
+  phone: 'India: 10 digits (+91 is fine). Outside India: + country code, e.g. +971 50 123 4567', phone2: 'Second contact (optional) — same rule',
+  manager: 'Name - number, e.g. Ravi - 98201 23456',
+  cost: 'Same style as the sheet: 25k, 15 to 20 k, 1.5 L',
+  link: 'Profile slide / Instagram / YouTube link',
+  remarks: 'e.g. Updated on 11/2026  or  Need to connect for cost',
+};
+
+function openAdd() {
+  $('addModal').classList.add('show');
+  resetMsg();
+  $('fFields').innerHTML = '';   // don't carry old values into a fresh form
+  if (SCHEMA) return fillCats();
+  $('fCat').innerHTML = '<option>Loading…</option>';
+  google.script.run
+    .withSuccessHandler(s => { SCHEMA = s; fillCats(); })
+    .withFailureHandler(e => showMsg('err', 'Could not load the form: ' + esc(e.message)))
+    .getFormSchema();
+}
+function closeAdd() { $('addModal').classList.remove('show'); }
+
+function fillCats() {
+  const prev = $('fCat').value;
+  $('fCat').innerHTML = SCHEMA.map(t => '<option value="' + esc(t.cat) + '">' + esc(t.cat) + '  —  ' + esc(t.tab) + '</option>').join('');
+  $('fCat').value = SCHEMA.some(t => t.cat === prev) ? prev : (SCHEMA.some(t => t.cat === CAT) ? CAT : SCHEMA[0].cat);
+  fillFields();
+}
+
+function fillFields() {
+  const t = SCHEMA.find(x => x.cat === $('fCat').value);
+  const keep = {};
+  document.querySelectorAll('#fFields [data-k]').forEach(el => { if (el.value) keep[el.dataset.k] = el.value; });
+  const fields = t.fields.slice().sort((a, b) => FIELD_ORDER.indexOf(a.key) - FIELD_ORDER.indexOf(b.key));
+  $('fFields').innerHTML = fields.map(f => {
+    const id = 'in_' + f.key;
+    const wide = f.kind === 'textarea' || f.kind === 'url' || f.key === 'manager';
+    const hasCo = t.fields.some(x => x.key === 'company'), hasNm = t.fields.some(x => x.key === 'name');
+    const req = (f.key === 'name' && !hasCo) || (f.key === 'company' && !hasNm);
+    const list = f.options.length ? ' list="dl_' + f.key + '"' : '';
+    const dl = f.options.length ? '<datalist id="dl_' + f.key + '">' + f.options.map(o => '<option value="' + esc(o) + '">').join('') + '</datalist>' : '';
+    const input = f.kind === 'textarea'
+      ? '<textarea id="' + id + '" data-k="' + f.key + '"></textarea>'
+      : '<input id="' + id + '" data-k="' + f.key + '"' + list + (f.kind === 'phone' ? ' inputmode="tel"' : '') + (req ? ' required' : '') + '>';
+    return '<div class="f' + (wide ? ' wide' : '') + '"><label><b>' + esc(f.label) + '</b>' + (req ? ' *' : '') + '</label>'
+      + input + dl + (FIELD_HELP[f.key] ? '<small>' + FIELD_HELP[f.key] + '</small>' : '')
+      + (['phone', 'phone2', 'manager', 'city'].indexOf(f.key) >= 0 ? '<small class="tip"></small>' : '') + '</div>';
+  }).join('');
+  Object.keys(keep).forEach(k => { const el = document.querySelector('#fFields [data-k="' + k + '"]'); if (el) el.value = keep[k]; });
+  ['phone', 'phone2', 'manager', 'city'].forEach(k => {
+    const el = $('in_' + k); if (!el) return;
+    // Skip when moving straight to Save/Cancel (Save validates itself) —
+    // otherwise the message shifts the button and the click is lost
+    el.addEventListener('blur', e => { if (e.relatedTarget && e.relatedTarget.tagName === 'BUTTON') return; setTimeout(() => checkField(k), 150); });
+    el.addEventListener('input', () => { if (el.parentElement.classList.contains('bad') || k === 'city') checkField(k); });
+  });
+  const first = $('fFields').querySelector('input,textarea'); if (first) first.focus();
+}
+
+function collect() {
+  const data = {};
+  document.querySelectorAll('#fFields [data-k]').forEach(el => { data[el.dataset.k] = el.value.trim(); });
+  return data;
+}
+
+/* Same rule as checkPhone_ in Code.gs — if you change one, change both */
+function checkPhone_(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return { ok: false, err: 'Number is empty' };
+  if (/[a-z]/i.test(s)) return { ok: false, err: 'Number cannot contain letters' };
+  const plus = /^\s*(\+|00)/.test(s);
+  let d = s.replace(/\D/g, '');
+  if (/^00/.test(s.trim())) d = d.slice(2);
+  const dummy = x => /^(\d)\1+$/.test(x) || ['0123456789', '1234567890', '9876543210', '0987654321'].indexOf(x) >= 0;
+
+  // Indian
+  let ind = null;
+  if (plus && /^91\d{10}$/.test(d)) ind = d.slice(2);
+  else if (!plus && /^\d{10}$/.test(d)) ind = d;
+  else if (!plus && /^0\d{10}$/.test(d)) ind = d.slice(1);
+  else if (!plus && /^91\d{10}$/.test(d)) ind = d.slice(2);
+  if (ind !== null) {
+    if (!/^[6-9]/.test(ind)) return { ok: false, err: 'Indian mobile numbers start with 6, 7, 8 or 9' };
+    if (dummy(ind)) return { ok: false, err: 'This looks like a dummy number' };
+    return { ok: true, digits: '91' + ind, pretty: ind.slice(0, 5) + ' ' + ind.slice(5) };
+  }
+  if (plus && /^91/.test(d)) return { ok: false, err: '+91 must be followed by exactly 10 digits' };
+  // International
+  if (plus) {
+    if (d.length < 8 || d.length > 15) return { ok: false, err: 'International numbers need 8–15 digits including country code' };
+    if (/^(\d)\1+$/.test(d.slice(-8))) return { ok: false, err: 'This looks like a dummy number' };
+    return { ok: true, digits: d, pretty: '+' + d };
+  }
+  return { ok: false, err: 'Indian numbers have 10 digits. For a number outside India, start with + and the country code (e.g. +971…)' };
+}
+
+/** Check one field and show a small message under it. Returns error text or '' */
+function checkField(k) {
+  const el = $('in_' + k); if (!el) return '';
+  const box = el.parentElement, v = el.value.trim();
+  let tip = box.querySelector('.tip');
+  if (!tip) { tip = document.createElement('small'); tip.className = 'tip'; box.appendChild(tip); }
+  box.classList.remove('bad'); tip.textContent = ''; tip.style.color = '';
+  if (!v) return '';
+  let err = '', ok = '';
+  if (k === 'phone' || k === 'phone2') {
+    const r = checkPhone_(v); if (r.ok) ok = '✓ Will be saved as: ' + r.pretty; else err = r.err;
+  } else if (k === 'manager') {
+    for (const n of (v.match(/\+?\d[\d\s\-().]*\d/g) || [])) {
+      if (n.replace(/\D/g, '').length < 4) continue;
+      const r = checkPhone_(n); if (!r.ok) { err = r.err; break; }
+    }
+  } else if (k === 'city') {
+    const opts = [...document.querySelectorAll('#dl_city option')].map(o => o.value.toLowerCase());
+    if (opts.length && opts.indexOf(v.toLowerCase()) < 0) ok = '＋ New city — it will be added to the sheet (spelling/format is cleaned automatically, e.g. "banglore" → Bangalore)';
+  }
+  if (err) { box.classList.add('bad'); tip.textContent = '✕ ' + err; tip.style.color = '#c0392b'; }
+  else if (ok) { tip.textContent = ok; tip.style.color = k === 'city' ? 'var(--warn)' : 'var(--ok)'; }
+  return err;
+}
+
+function validate(data) {
+  if (!data.name && !data.company) return 'Enter a Name or Company/Band.';
+  for (const k of ['phone', 'phone2', 'manager']) {
+    const e = checkField(k);
+    if (e) { $('in_' + k).focus(); return ({ phone: 'Contact number', phone2: 'Second number', manager: 'Manager number' })[k] + ': ' + e; }
+  }
+  return '';
+}
+
+function resetMsg() { $('addMsg').className = 'msg'; $('addForce').style.display = 'none'; $('addSave').disabled = false; }
+function showMsg(type, html) { $('addMsg').className = 'msg show ' + type; $('addMsg').innerHTML = html; }
+
+function save(force) {
+  const data = collect();
+  const err = validate(data);
+  if (err) return showMsg('err', err);
+  $('addSave').disabled = true; $('addForce').style.display = 'none';
+  showMsg('warn', 'Saving to sheet…');
+  const cat = $('fCat').value;
+  google.script.run
+    .withSuccessHandler(res => {
+      $('addSave').disabled = false;
+      if (res.duplicate) {
+        showMsg('warn', '<b>' + esc(data.name || data.company) + '</b> already exists in this tab (row ' + res.row + '). '
+          + '<a target="_blank" href="' + esc(cellLink(res.gid, res.row, res.nameCol)) + '">View ↗</a>. Add anyway?');
+        $('addForce').style.display = '';
+        return;
+      }
+      const url = cellLink(res.gid, res.row, res.nameCol);
+      showMsg('ok', '✓ Added to <b>' + esc(res.tab) + '</b>, row ' + res.row + (res.srno ? ' (Sr ' + res.srno + ')' : '')
+        + ' · <a target="_blank" href="' + esc(url) + '">Open in sheet ↗</a>');
+      document.querySelectorAll('#fFields [data-k]').forEach(el => el.value = '');
+      JUST_ADDED = res.gid + '-' + res.row;
+      SCHEMA = null; // reload next time so new city/type suggestions show up
+      CAT = cat; $('q').value = data.name || data.company;
+      load();
+    })
+    .withFailureHandler(e => { $('addSave').disabled = false; showMsg('err', 'Could not save: ' + esc(e.message)); })
+    .addArtist({ cat: cat, data: data, force: !!force });
+}
+
+$('addBtn').onclick = openAdd;
+$('addCancel').onclick = closeAdd;
+$('addModal').addEventListener('click', e => { if (e.target === $('addModal')) closeAdd(); });
+$('fCat').addEventListener('change', () => { resetMsg(); fillFields(); });
+// Typing anything clears the old red error at the bottom
+$('fFields').addEventListener('input', () => { if ($('addMsg').classList.contains('err')) resetMsg(); });
+$('addForm').addEventListener('submit', e => { e.preventDefault(); save(false); });
+$('addForce').onclick = () => save(true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAdd(); });
+
+load();
+</script>
+</body>
+</html>

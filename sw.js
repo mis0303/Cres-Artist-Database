@@ -2,7 +2,7 @@
 // Only the wrapper (this repo's files) is cached so the app opens fast.
 // Artist data is NEVER cached — it always comes live from the Google Sheet.
 // Bump VERSION whenever index.html / icons change, so phones pick up the new shell.
-const VERSION = 'artist-finder-v1';
+const VERSION = 'artist-finder-v2';
 const SHELL = [
   './',
   './index.html',

@@ -80,7 +80,8 @@ Tabs are listed in `TABS` at the top of `Code.gs`:
 
 - **Android / Chrome / Edge:** open the app link → menu → **Install app** (or the install icon in the address bar).
 - **iPhone (Safari):** Share → **Add to Home Screen**.
-- Users must be signed in to Google with their **creativerays.in** account. If the app keeps loading, tap **Open in browser**, sign in once, then reopen the app.
+- Users must be signed in to Google with their **creativerays.in** account.
+- The app uses the `script.google.com/a/macros/creativerays.in/...` link, so it works even when a phone or browser is signed in to several Google accounts (personal Gmail + work). If the app keeps loading, tap **Open in browser**, sign in once, then reopen the app.
 
 ## Changing the app wrapper
 

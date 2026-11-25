@@ -2,14 +2,12 @@
 
 Internal portal + installable app for the **CRES artist master database** (Google Sheet).
 
-- **Artist cards** (dark theme): photo, name, cost, number, 1–2 line bio, manager, email, and portfolio links (profile slide, Instagram, YouTube, website)
-- **Photos** taken from each artist's own profile slide; click a photo to enlarge it
-- **Search** artists across all categories — name, band, city, act type, remarks, bio
-- **Filter** by category, city, budget, status (cost updated / follow-up), phone/link, has photo / no photo
+- **Search** artists across all categories — name, band, city, act type, remarks
+- **Filter** by category, city, budget, status (cost updated / follow-up), phone/link
 - **Shortlist** artists and copy the list for WhatsApp / mail (with or without contacts)
 - **Add artist** from a form — written to the right tab, right below the last entry, with the next Sr no
-- **✎ Edit** opens the artist in a form inside the portal; only the fields you change are written to that row (with an **Edit Log** tab of old → new values). **Sheet ↗** opens the row in the sheet
-- Phone validation (Indian + international), email check, city name clean-up, duplicate check
+- **Edit ↗** opens the sheet directly at the artist's name cell
+- Phone validation (Indian + international), city name clean-up, duplicate check
 
 Data is always **live from the sheet** — nothing is stored in this repo or in the app.
 
@@ -50,30 +48,6 @@ Installable app (GitHub Pages) ← index.html + manifest.json + sw.js + icons/
 
 Saving alone does **not** update the live link — always deploy a *New version*.
 Using "New version" keeps the same URL, so the app needs no change.
-
-## Profile columns
-
-Each category tab has these columns at the end, filled by the team: `Email`, `Instagram`, `YouTube`, `Website`, `Bio`
-(and `Manager contact no & name` on tabs that did not have one). The portal finds them by header name.
-Instagram can be a link or an `@handle`.
-
-## Photos
-
-1. In `Code.gs`, set `PHOTO_FOLDER_ID` to the Drive folder for artist photos.
-2. Reload the sheet and use the **Artist Finder** menu → **Extract photos from slides**
-   (or run `extractPhotos` from the Apps Script editor). Allow the permissions it asks for.
-3. It opens each artist's own profile slide, saves the photo in the folder, and keeps going in
-   ~5-minute batches by itself. You get an email when it is finished. If the sheet shows
-   "Running script", press **Dismiss**, not Cancel.
-4. The **Photos** tab has one row per artist:
-   - `Status`: `OK`, `NO SLIDE` (no profile slide; add a photo by hand), `NO PHOTO ON SLIDE`,
-     `SLIDE NOT FOUND`, `NO ACCESS TO DECK`.
-   - `Manual photo`: paste a Drive link (or file ID) to set or replace a photo. A manual photo always wins.
-   - YouTube / Instagram / other links found on the slide are kept here too, and fill the card's
-     buttons when the artist's own columns are empty.
-5. **Update photo list (new artists)** adds new artists; **Retry photos that failed** tries again.
-
-Photos are sent to the portal by the script itself (cached for 6 hours), so they show even where a browser blocks Google's cookies. If a photo can't load, the card shows the initials instead.
 
 ## Speed
 

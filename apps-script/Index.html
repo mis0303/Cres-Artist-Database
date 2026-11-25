@@ -196,12 +196,13 @@
 
 <div class="modal" id="addModal">
   <form class="sheet" id="addForm" autocomplete="off">
-    <h2>Add new artist</h2>
+    <h2 id="addTitle">Add new artist</h2>
     <p class="hint" id="addHint">Pick a category — the form adapts to that tab's columns. The entry is added below the last artist in that tab.</p>
     <div class="f wide"><label><b>Category / Tab</b></label><select id="fCat" required></select></div>
     <div class="fgrid" id="fFields" style="margin-top:10px"></div>
     <div class="msg" id="addMsg"></div>
     <div class="mact">
+      <a class="btn" id="editSheetLink" target="_blank" style="display:none;margin-right:auto">Open in sheet ↗</a>
       <button type="button" class="btn" id="addCancel">Cancel</button>
       <button type="button" class="btn" id="addForce" style="display:none">Yes, add anyway</button>
       <button type="submit" class="btn pri" id="addSave">Save to sheet</button>
@@ -211,6 +212,7 @@
 
 <script>
 let ALL = [], SHEET_URL = '', CAT = '', ONLY_SEL = false, JUST_ADDED = '';
+const THUMBS = {};      // photoId -> data URL (loaded from the script as cards come on screen)
 let SEL = new Set();
 try { SEL = new Set(JSON.parse(localStorage.getItem('cresShortlist') || '[]')); } catch (e) {}
 const $ = id => document.getElementById(id);
@@ -294,8 +296,8 @@ function filtered() {
     if (st && a.status !== st) return false;
     if (has === 'phone' && !a.phones.length && !a.managerPhones.length) return false;
     if (has === 'link' && !a.link) return false;
-    if (has === 'photo' && !a.photo) return false;
-    if (has === 'nophoto' && a.photo) return false;
+    if (has === 'photo' && !(a.photo || a.photoId)) return false;
+    if (has === 'nophoto' && (a.photo || a.photoId)) return false;
     if (bud === 'none') { if (a.costMin != null) return false; }
     else if (bud) {
       const [lo, hi] = bud.split('-').map(Number);
@@ -338,9 +340,10 @@ function card(a) {
   const sub = [a.company, a.type, a.language].filter(Boolean).map(esc).join(' · ');
   const phone = a.phones[0] || a.managerPhones[0];
   const sheetLink = cellLink(a.gid, a.row, a.nameCol);
-  const photo = a.photo
-    ? '<div class="ph zoom" data-zoom="' + a.id + '" title="Click to enlarge" style="background:' + avatarBg(a.name) + '" data-ini="' + esc(initials(a.name)) + '">'
-      + '<img loading="lazy" referrerpolicy="no-referrer" src="' + esc(a.photo) + '" alt="' + esc(a.name) + '" onerror="photoFailed(this)"></div>'
+  const photo = a.photo || a.photoId
+    ? '<div class="ph zoom" data-zoom="' + a.id + '" data-pid="' + esc(a.photoId || '') + '" title="Click to enlarge" style="background:' + avatarBg(a.name) + '" data-ini="' + esc(initials(a.name)) + '">'
+      + (a.photo || THUMBS[a.photoId] ? '<img src="' + esc(a.photo || THUMBS[a.photoId]) + '" alt="' + esc(a.name) + '" onerror="photoFailed(this)">' : esc(initials(a.name)))
+      + '</div>'
     : '<div class="ph" style="background:' + avatarBg(a.name) + '">' + esc(initials(a.name)) + '</div>';
   const price = a.costRaw
     ? '<span class="price">' + esc(costLabel(a) || a.costRaw) + '</span>' + (costLabel(a) && a.costRaw.length > 8 ? '<span class="sub" title="' + esc(a.costRaw) + '">' + esc(a.costRaw) + '</span>' : '')
@@ -373,7 +376,8 @@ function card(a) {
     + (a.extra ? '<div class="sub">Note: ' + esc(a.extra) + '</div>' : '')
     + '<div class="acts">'
     +   (phone ? '<a class="btn" href="tel:+' + phone + '">Call</a><a class="btn" target="_blank" rel="noopener" href="https://wa.me/' + phone + '">WhatsApp</a>' : '')
-    +   '<a class="btn" target="_blank" href="' + esc(sheetLink) + '" title="Opens the sheet at this artist&#39;s name cell — edit there">Edit ↗</a>'
+    +   '<button class="btn" data-edit="' + a.id + '">✎ Edit</button>'
+    +   '<a class="btn" target="_blank" href="' + esc(sheetLink) + '" title="Open this artist in the sheet">Sheet ↗</a>'
     + '</div></div>';
 }
 
@@ -382,6 +386,7 @@ function render() {
   const list = filtered();
   const MAX = 300;
   $('grid').innerHTML = list.slice(0, MAX).map(card).join('');
+  setTimeout(watchPhotos, 0);
   if (JUST_ADDED) { const el = document.querySelector('.card[data-id="' + JUST_ADDED + '"]'); if (el) { el.classList.add('new'); el.scrollIntoView({block: 'center'}); } JUST_ADDED = ''; }
   $('empty').style.display = list.length ? 'none' : 'block';
   $('count').textContent = list.length + ' of ' + ALL.length + (list.length > MAX ? ' (showing first ' + MAX + ' — search to narrow)' : '');
@@ -456,7 +461,23 @@ const FIELD_HELP = {
   website: 'Official site or booking page', bio: '1–2 lines: style, languages, best-fit events',
 };
 
+let MODE = 'add', EDITING = null;
+
+function setMode(mode, a) {
+  MODE = mode; EDITING = a || null;
+  const edit = mode === 'edit';
+  $('addTitle').textContent = edit ? 'Edit ' + a.name : 'Add new artist';
+  $('addHint').textContent = edit
+    ? 'Change anything and press Save. Only the fields you change are updated in the sheet (row ' + a.row + ', ' + a.tab + ').'
+    : "Pick a category — the form adapts to that tab's columns. The entry is added below the last artist in that tab.";
+  $('addSave').textContent = edit ? 'Save changes' : 'Save to sheet';
+  $('fCat').disabled = edit;
+  $('editSheetLink').style.display = edit ? '' : 'none';
+  if (edit) $('editSheetLink').href = cellLink(a.gid, a.row, a.nameCol);
+}
+
 function openAdd() {
+  setMode('add');
   $('addModal').classList.add('show');
   resetMsg();
   $('fFields').innerHTML = '';   // don't carry old values into a fresh form
@@ -467,7 +488,25 @@ function openAdd() {
     .withFailureHandler(e => showMsg('err', 'Could not load the form: ' + esc(e.message)))
     .getFormSchema();
 }
-function closeAdd() { $('addModal').classList.remove('show'); }
+function closeAdd() { $('addModal').classList.remove('show'); $('fCat').disabled = false; }
+
+function openEdit(a) {
+  setMode('edit', a);
+  $('addModal').classList.add('show');
+  resetMsg();
+  $('fFields').innerHTML = '';
+  const go = () => {
+    $('fCat').innerHTML = SCHEMA.map(t => '<option value="' + esc(t.cat) + '">' + esc(t.cat) + '  —  ' + esc(t.tab) + '</option>').join('');
+    $('fCat').value = a.cat;
+    fillFields();
+    Object.keys(a.raw || {}).forEach(k => { const el = $('in_' + k); if (el) el.value = a.raw[k]; });
+    const first = $('fFields').querySelector('input,textarea'); if (first) first.focus();
+  };
+  if (SCHEMA) return go();
+  $('fCat').innerHTML = '<option>Loading…</option>';
+  google.script.run.withSuccessHandler(sc => { SCHEMA = sc; go(); })
+    .withFailureHandler(e => showMsg('err', 'Could not load the form: ' + esc(e.message))).getFormSchema();
+}
 
 function fillCats() {
   const prev = $('fCat').value;
@@ -551,6 +590,7 @@ function checkField(k) {
   if (!tip) { tip = document.createElement('small'); tip.className = 'tip'; box.appendChild(tip); }
   box.classList.remove('bad'); tip.textContent = ''; tip.style.color = '';
   if (!v) return '';
+  if (MODE === 'edit' && EDITING && EDITING.raw && v === String(EDITING.raw[k] || '').trim()) return '';   // unchanged old value
   let err = '', ok = '';
   if (k === 'phone' || k === 'phone2') {
     const r = checkPhone_(v); if (r.ok) ok = '✓ Will be saved as: ' + r.pretty; else err = r.err;
@@ -582,7 +622,28 @@ function validate(data) {
 function resetMsg() { $('addMsg').className = 'msg'; $('addForce').style.display = 'none'; $('addSave').disabled = false; }
 function showMsg(type, html) { $('addMsg').className = 'msg show ' + type; $('addMsg').innerHTML = html; }
 
+function saveEdit() {
+  const data = collect();
+  const err = validate(data);
+  if (err) return showMsg('err', err);
+  const a = EDITING;
+  $('addSave').disabled = true;
+  showMsg('warn', 'Saving changes…');
+  google.script.run
+    .withSuccessHandler(res => {
+      $('addSave').disabled = false;
+      if (res.unchanged) { showMsg('ok', 'Nothing changed.'); return; }
+      showMsg('ok', '✓ Saved ' + res.changed + ' change' + (res.changed > 1 ? 's' : '') + ' · <a target="_blank" href="' + esc(cellLink(res.gid, res.row, res.nameCol)) + '">Open in sheet ↗</a>');
+      JUST_ADDED = res.gid + '-' + res.row;
+      setTimeout(closeAdd, 900);
+      load(true);
+    })
+    .withFailureHandler(e => { $('addSave').disabled = false; showMsg('err', 'Could not save: ' + esc(e.message)); })
+    .updateArtist({ cat: a.cat, row: a.row, origName: (a.raw && (a.raw.name || a.raw.company)) || a.name, data: data });
+}
+
 function save(force) {
+  if (MODE === 'edit') return saveEdit();
   const data = collect();
   const err = validate(data);
   if (err) return showMsg('err', err);
@@ -624,19 +685,55 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAdd(); 
 /* ===================== PHOTO ZOOM ===================== */
 // If a Drive photo can't load (not signed in, blocked cookies), show the initials instead of a broken image
 function photoFailed(img) {
-  const box = img.parentElement;
+  const box = img.parentElement; if (!box) return;
   box.classList.remove('zoom'); box.removeAttribute('data-zoom'); box.removeAttribute('title');
   box.textContent = box.dataset.ini || '';
 }
+/* Load thumbnails for cards that are on screen, 40 at a time */
+let PHOTO_Q = [], PHOTO_BUSY = false, PHOTO_OBS = null;
+function wantPhoto(pid) { if (pid && !(pid in THUMBS) && PHOTO_Q.indexOf(pid) < 0) PHOTO_Q.push(pid); pumpPhotos(); }
+function pumpPhotos() {
+  if (PHOTO_BUSY || !PHOTO_Q.length) return;
+  PHOTO_BUSY = true;
+  const batch = PHOTO_Q.splice(0, 40);
+  google.script.run
+    .withSuccessHandler(map => {
+      Object.keys(map || {}).forEach(pid => {
+        THUMBS[pid] = map[pid] || '';
+        document.querySelectorAll('.ph[data-pid="' + pid + '"]').forEach(box => {
+          if (map[pid]) { box.innerHTML = ''; const im = new Image(); im.alt = ''; im.onerror = () => photoFailed(im); im.src = map[pid]; box.appendChild(im); }
+          else photoFailed({ parentElement: box });
+        });
+      });
+      PHOTO_BUSY = false; pumpPhotos();
+    })
+    .withFailureHandler(() => { batch.forEach(pid => THUMBS[pid] = ''); PHOTO_BUSY = false; pumpPhotos(); })
+    .getThumbs(batch);
+}
+function watchPhotos() {
+  if (!PHOTO_OBS && 'IntersectionObserver' in window) {
+    PHOTO_OBS = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { PHOTO_OBS.unobserve(e.target); wantPhoto(e.target.dataset.pid); } }), { rootMargin: '400px' });
+  }
+  document.querySelectorAll('.ph[data-pid]').forEach(box => {
+    const pid = box.dataset.pid; if (!pid || pid in THUMBS) return;
+    if (PHOTO_OBS) PHOTO_OBS.observe(box); else wantPhoto(pid);
+  });
+}
+
 function openPhoto(a) {
-  $('lbImg').src = a.photoLarge || a.photo;
+  $('lbImg').src = a.photoLarge || a.photo || THUMBS[a.photoId] || '';
+  if (a.photoId && !a.photoLarge) {
+    google.script.run.withSuccessHandler(url => { if (url) { a.photoLarge = url; if ($('lb').classList.contains('show')) $('lbImg').src = url; } }).getPhotoLarge(a.photoId);
+  }
   $('lbCap').innerHTML = esc(a.name) + '<span>' + esc([a.cat, a.city].filter(Boolean).join(' · ')) + '</span>';
   $('lb').classList.add('show');
 }
 function closePhoto() { $('lb').classList.remove('show'); }
 $('grid').addEventListener('click', e => {
+  const ed = e.target.closest('[data-edit]');
+  if (ed) { const a = ALL.find(x => x.id === ed.dataset.edit); if (a) openEdit(a); return; }
   const z = e.target.closest('[data-zoom]'); if (!z) return;
-  const a = ALL.find(x => x.id === z.dataset.zoom); if (a && a.photo) openPhoto(a);
+  const a = ALL.find(x => x.id === z.dataset.zoom); if (a && (a.photo || THUMBS[a.photoId])) openPhoto(a);
 });
 $('lb').addEventListener('click', closePhoto);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePhoto(); });

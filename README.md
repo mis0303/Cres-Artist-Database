@@ -8,7 +8,7 @@ Internal portal + installable app for the **CRES artist master database** (Googl
 - **Filter** by category, city, budget, status (cost updated / follow-up), phone/link, has photo / no photo
 - **Shortlist** artists and copy the list for WhatsApp / mail (with or without contacts)
 - **Add artist** from a form — written to the right tab, right below the last entry, with the next Sr no
-- **Edit ↗** opens the sheet directly at the artist's name cell
+- **✎ Edit** opens the artist in a form inside the portal; only the fields you change are written to that row (with an **Edit Log** tab of old → new values). **Sheet ↗** opens the row in the sheet
 - Phone validation (Indian + international), email check, city name clean-up, duplicate check
 
 Data is always **live from the sheet** — nothing is stored in this repo or in the app.
@@ -73,7 +73,7 @@ Instagram can be a link or an `@handle`.
      buttons when the artist's own columns are empty.
 5. **Update photo list (new artists)** adds new artists; **Retry photos that failed** tries again.
 
-If a photo can't load on a device (not signed in to Google), the card shows the initials instead.
+Photos are sent to the portal by the script itself (cached for 6 hours), so they show even where a browser blocks Google's cookies. If a photo can't load, the card shows the initials instead.
 
 ## Speed
 

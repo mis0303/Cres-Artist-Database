@@ -254,6 +254,7 @@ function normalizeTab_(values, cfg, gid, richLinks) {
       website: cleanUrl_(get(row, 'website'), ''),
       bio: get(row, 'bio'),
       photo: '',   // filled later from the "Photos" sheet (photos taken from the profile slides)
+      raw: Object.keys(col).reduce((o, f) => { if (f !== 'srno') o[f] = get(row, f); return o; }, {}),
       status: statusOf_(remarks, costRaw),
       extra: extra,
     });
@@ -524,16 +525,12 @@ function addArtist(payload) {
   }
 }
 
-/** Pure logic (testable): which row, which Sr no, which values. */
-function planInsert_(values, data) {
-  const hm = mapHeader_(values);
-  if (!hm) return { error: 'No header row found in this tab' };
-  const col = hm.col;
+/** Shared by Add and Edit: trims, validates and tidies a form's values. Returns { clean } or { error, field }. */
+function cleanData_(data) {
   const clean = {};
-  Object.keys(data).forEach(k => { const v = String(data[k] == null ? '' : data[k]).trim(); if (v) clean[k] = v; });
-  if (!clean.name && !clean.company) return { error: 'Name (or Company/Band) is required' };
+  Object.keys(data || {}).forEach(k => { const v = String(data[k] == null ? '' : data[k]).trim(); if (v) clean[k] = v; });
+  if (!clean.name && !clean.company) return { error: 'Name (or Company/Band) is required', field: 'name' };
   if (clean.link && !/^https?:\/\//i.test(clean.link)) clean.link = 'https://' + clean.link;
-
   // Phone: a wrong number must never reach the sheet
   for (const k of ['phone', 'phone2']) {
     if (!clean[k]) continue;
@@ -554,6 +551,17 @@ function planInsert_(values, data) {
   if (clean.city) clean.city = cleanCity_(clean.city);
   if (clean.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)) return { error: 'Email looks wrong (e.g. name@example.com)', field: 'email' };
   ['instagram', 'youtube', 'website'].forEach(k => { if (clean[k]) clean[k] = cleanUrl_(clean[k], k); });
+  return { clean: clean };
+}
+
+/** Pure logic (testable): which row, which Sr no, which values. */
+function planInsert_(values, data) {
+  const hm = mapHeader_(values);
+  if (!hm) return { error: 'No header row found in this tab' };
+  const col = hm.col;
+  const cd = cleanData_(data);
+  if (cd.error) return cd;
+  const clean = cd.clean;
 
   // Last entry = last row that has a name / company
   let last = hm.h, maxSr = 0, dup = 0;
@@ -859,6 +867,43 @@ function retryFailedPhotos() {
   return extractPhotos();
 }
 
+/**
+ * Photos are sent to the portal by the script itself (as data URLs), so they show even when
+ * a browser blocks Google's login cookies inside the app. Small thumbnails are cached for 6 hours.
+ * Called by the frontend with the IDs of the cards on screen.
+ */
+function getThumbs(ids) {
+  const cache = CacheService.getScriptCache();
+  const out = {};
+  const keys = (ids || []).slice(0, 40).map(id => 'th_' + id);
+  const hit = keys.length ? cache.getAll(keys) : {};
+  const put = {};
+  (ids || []).slice(0, 40).forEach(id => {
+    if (hit['th_' + id]) { out[id] = hit['th_' + id]; return; }
+    try {
+      const file = DriveApp.getFileById(id);
+      let blob = null;
+      try { blob = file.getThumbnail(); } catch (e) {}
+      if (!blob || blob.getBytes().length < 200) blob = file.getBlob();
+      const bytes = blob.getBytes();
+      if (bytes.length > 600000) { out[id] = ''; return; }   // too big for a thumbnail; zoom still works
+      const url = 'data:' + (blob.getContentType() || 'image/jpeg') + ';base64,' + Utilities.base64Encode(bytes);
+      out[id] = url;
+      if (url.length < 95000) put['th_' + id] = url;
+    } catch (e) { out[id] = ''; }
+  });
+  try { if (Object.keys(put).length) cache.putAll(put, 6 * 60 * 60); } catch (e) {}
+  return out;
+}
+
+/** Full-size photo for the zoom view. */
+function getPhotoLarge(id) {
+  try {
+    const blob = DriveApp.getFileById(id).getBlob();
+    return 'data:' + (blob.getContentType() || 'image/jpeg') + ';base64,' + Utilities.base64Encode(blob.getBytes());
+  } catch (e) { return ''; }
+}
+
 /** key -> file id (manual photo beats the slide photo) */
 function readPhotoMap_(ss) {
   const sh = ss.getSheetByName(PHOTO_TAB);
@@ -877,7 +922,7 @@ function attachPhotos_(artists, map) {
   artists.forEach(a => {
     const p = map[photoKey_(a.tab, a.name)];
     if (!p) return;
-    if (p.id) { a.photo = photoThumb_(p.id, 240); a.photoLarge = photoThumb_(p.id, 1200); }
+    if (p.id) a.photoId = p.id;   // the picture itself is sent by getThumbs() / getPhotoLarge()
     if (!a.youtube && p.yt) a.youtube = p.yt;
     if (!a.instagram && p.ig) a.instagram = p.ig;
     if (!a.website && p.web) a.website = p.web;
@@ -885,5 +930,112 @@ function attachPhotos_(artists, map) {
   return artists;
 }
 
+/* ============================ EDIT ARTIST ============================ */
+const EDIT_LOG_TAB = 'Edit Log';
+
+/**
+ * Pure (testable): find the row to edit and work out the new cell values.
+ * values = the tab's display values; row = 1-based row the portal showed; origName = name the portal showed.
+ * Returns { row, updates: [[col0, newValue]], changes: [[field, old, new]], nameCol } or { error }.
+ */
+function planEdit_(values, row, origName, data) {
+  const hm = mapHeader_(values);
+  if (!hm) return { error: 'No header row found in this tab' };
+  const col = hm.col;
+  const norm = v => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const nameAt = r => {
+    const v = values[r - 1] || [];
+    return norm(col.name !== undefined && String(v[col.name] || '').trim() ? v[col.name] : (col.company !== undefined ? v[col.company] : ''));
+  };
+  // The row may have moved if someone inserted/deleted rows in the sheet: check, then search by name
+  let target = row;
+  if (!(target > hm.h + 1 && target <= values.length && nameAt(target) === norm(origName))) {
+    target = 0;
+    for (let r = hm.h + 2; r <= values.length; r++) if (nameAt(r) === norm(origName)) { target = r; break; }
+    if (!target) return { error: '"' + origName + '" was not found in this tab any more. Refresh the portal and try again.' };
+  }
+  const old = values[target - 1] || [];
+  const oldOf = k => String(old[col[k]] == null ? '' : old[col[k]]).trim();
+  // Only fields the user actually changed are checked and written (old messy cells are left alone)
+  const changed = {};
+  Object.keys(data || {}).forEach(k => {
+    if (col[k] === undefined || k === 'srno') return;
+    if (String(data[k] == null ? '' : data[k]).trim() !== oldOf(k)) changed[k] = data[k];
+  });
+  const base = {};
+  ['name', 'company'].forEach(k => { if (col[k] !== undefined) base[k] = k in changed ? changed[k] : oldOf(k); });
+  const cd = cleanData_(Object.assign({}, base, changed));
+  if (cd.error) return cd;
+  const clean = cd.clean;
+  const updates = [], changes = [];
+  Object.keys(changed).forEach(k => {
+    const nv = clean[k] || '';
+    if (nv !== oldOf(k)) { updates.push([col[k], nv]); changes.push([k, oldOf(k), nv]); }
+  });
+  const nameCol = col.name !== undefined ? col.name : col.company;
+  const newName = (col.name !== undefined ? clean.name : clean.company) || '';
+  return { row: target, updates: updates, changes: changes, nameCol: nameCol, newName: newName, oldName: String(old[nameCol] || '').trim() };
+}
+
+/** Frontend: updateArtist({cat, row, origName, data}) */
+function updateArtist(payload) {
+  const cfg = TABS.filter(t => t.cat === payload.cat)[0];
+  if (!cfg) throw new Error('Category not found: ' + payload.cat);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const ss = getSS_();
+    const sh = ss.getSheetByName(cfg.tab);
+    if (!sh) throw new Error('Tab not found: ' + cfg.tab);
+    const values = sh.getDataRange().getDisplayValues();
+    const plan = planEdit_(values, payload.row, payload.origName, payload.data || {});
+    if (plan.error) throw new Error(plan.error);
+    if (!plan.updates.length) return { ok: true, unchanged: true, row: plan.row, gid: sh.getSheetId(), nameCol: plan.nameCol + 1 };
+
+    const hm = mapHeader_(values);
+    plan.updates.forEach(u => {
+      const cell = sh.getRange(plan.row, u[0] + 1);
+      if ([hm.col.phone, hm.col.phone2, hm.col.manager].indexOf(u[0]) >= 0) cell.setNumberFormat('@');
+      cell.setValue(u[1]);
+    });
+
+    let who = '';
+    try { who = Session.getActiveUser().getEmail(); } catch (e) {}
+    const when = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'dd/MM/yyyy HH:mm');
+    const nameCell = sh.getRange(plan.row, plan.nameCol + 1);
+    const note = (nameCell.getNote() || '').split('\n').filter(l => !/^Edited /.test(l));
+    note.push('Edited via Artist Finder' + (who ? ' by ' + who : '') + ' on ' + when);
+    nameCell.setNote(note.filter(Boolean).join('\n'));
+
+    // Edit Log: one line per changed field, so any edit can be checked or undone
+    let log = ss.getSheetByName(EDIT_LOG_TAB);
+    if (!log) {
+      log = ss.insertSheet(EDIT_LOG_TAB);
+      log.getRange(1, 1, 1, 8).setValues([['When', 'Who', 'Tab', 'Row', 'Artist', 'Field', 'Old value', 'New value']]).setFontWeight('bold').setBackground('#C9DAF8');
+      log.setFrozenRows(1);
+    }
+    const rows = plan.changes.map(ch => [when, who, cfg.tab, plan.row, plan.newName || plan.oldName, ch[0], ch[1], ch[2]]);
+    log.getRange(log.getLastRow() + 1, 1, rows.length, 8).setValues(rows);
+
+    // Renamed? keep the artist's photo
+    if (plan.newName && plan.oldName && photoKey_(cfg.tab, plan.newName) !== photoKey_(cfg.tab, plan.oldName)) renamePhotoKey_(ss, cfg.tab, plan.oldName, plan.newName);
+
+    clearArtistCache_();
+    return { ok: true, row: plan.row, gid: sh.getSheetId(), nameCol: plan.nameCol + 1, changed: plan.changes.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function renamePhotoKey_(ss, tab, oldName, newName) {
+  const sh = ss.getSheetByName(PHOTO_TAB);
+  if (!sh) return;
+  const rows = readPhotoRows_(sh);
+  const k = photoKey_(tab, oldName);
+  let hit = false;
+  rows.forEach(r => { if (r[PH.key] === k) { r[PH.key] = photoKey_(tab, newName); r[PH.name] = newName; hit = true; } });
+  if (hit) writePhotoRows_(sh, rows);
+}
+
 // For local Node tests (ignored by Apps Script)
-if (typeof module !== 'undefined') module.exports = { pickLinks_, readPhotoMap_, planPhotoRows_, parseSlideLink_, driveId_, photoKey_, attachPhotos_, PH, PHOTO_HEADERS, checkPhone_, cleanCity_, allCities_, normalizeTab_, parseCost_, extractPhones_, TABS, buildSchema_, planInsert_, mapHeader_ };
+if (typeof module !== 'undefined') module.exports = { planEdit_, cleanData_, pickLinks_, readPhotoMap_, planPhotoRows_, parseSlideLink_, driveId_, photoKey_, attachPhotos_, PH, PHOTO_HEADERS, checkPhone_, cleanCity_, allCities_, normalizeTab_, parseCost_, extractPhones_, TABS, buildSchema_, planInsert_, mapHeader_ };

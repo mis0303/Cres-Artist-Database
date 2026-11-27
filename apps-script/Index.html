@@ -139,6 +139,7 @@
   .vrow img{width:72px;aspect-ratio:16/9;object-fit:cover;border-radius:5px;flex:none;background:#26262f}
   .vrow span{font-size:12.5px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .vrow small{display:block;color:var(--grey);font-size:10.5px;margin-top:2px}
+  .novid{border:1px dashed var(--line);border-radius:10px;padding:10px;text-align:center;font-size:12.5px;color:var(--grey)}
   .links{display:flex;gap:6px;flex-wrap:wrap}
   .lk{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:5px 9px;border-radius:999px;border:1px solid var(--line);background:#121217;color:var(--ink);text-decoration:none}
   .lk:hover{border-color:var(--acc)}
@@ -376,7 +377,7 @@ const ytThumb = (id, q) => 'https://i.ytimg.com/vi/' + id + '/' + (q || 'hqdefau
 
 function videoBlock(a) {
   const vids = a.videos || [];
-  if (!vids.length) return '';
+  if (!vids.length) return '<div class="novid">▶ No YouTube videos in sheet</div>';
   const best = vids[a.best >= 0 ? a.best : 0];
   const rest = vids.filter(v => v !== best);
   return '<div class="media">'
@@ -406,7 +407,6 @@ function card(a) {
   const other = a.website || (a.link && !['slides', 'instagram', 'youtube'].includes(a.linkType) ? a.link : '');
   const managerTxt = a.managerRaw ? esc(a.managerRaw).replace(/(\+?\d[\d\s-]{8,}\d)/, m => '<a href="tel:' + m.replace(/[^\d+]/g, '') + '">' + m + '</a>') : '';
   const links = (a.channel ? '<a class="lk" target="_blank" rel="noopener" href="' + esc(a.channel) + '"><i style="background:#ff0033">▶</i>YouTube channel</a>' : '')
-    + (slide ? '<a class="lk" target="_blank" rel="noopener" href="' + esc(slide) + '"><i style="background:#e0693c">▤</i>Profile slide</a>' : '')
     + (other ? '<a class="lk" target="_blank" rel="noopener" href="' + esc(other) + '"><i style="background:#3b82f6">⌂</i>Website</a>' : '');
   return '<div class="card' + (SEL.has(a.id) ? ' sel' : '') + '" data-id="' + a.id + '">'
     // 1. photo, name, category, city, status

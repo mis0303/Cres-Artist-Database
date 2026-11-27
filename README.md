@@ -8,7 +8,7 @@ Internal portal + installable app for the **CRES artist master database** (Googl
 - **Add artist** from a form — written to the right tab, right below the last entry, with the next Sr no
 - **✎ Edit** an artist right in the portal (only changed fields are written; every edit is noted on the cell and in an `Edit Log` tab) — **Sheet ↗** opens the exact cell
 - **Photos** on every card, taken from each artist's own profile slide (click to zoom)
-- **Videos** at the bottom of the card: ★ Best work plays in a popup inside the portal, plus *More videos*, YouTube channel and Profile slide
+- **Videos** at the bottom of the card: ★ Best work plays in a popup inside the portal, plus *More videos* and YouTube channel; "No YouTube videos in sheet" when there are none
 - Phone validation (Indian + international), city name clean-up, duplicate check
 
 Data is always **live from the sheet** — nothing is stored in this repo or in the app.

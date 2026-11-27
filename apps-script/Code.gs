@@ -32,6 +32,11 @@ const TABS = [
 // Header keywords -> field. First match wins, so the order matters.
 const FIELD_RULES = [
   ['manager',  /manager/i],
+  ['email',    /e-?mail/i],
+  ['instagram',/insta/i],
+  ['youtube',  /you\s*tube/i],
+  ['website',  /website|web site/i],
+  ['bio',      /^\s*bio\b/i],
   ['link',     /link/i],
   ['remarks',  /remark/i],
   ['cost',     /cost/i],
@@ -61,6 +66,21 @@ function getArtists(force) {
     if (hit) { hit.cached = true; return hit; }
   }
   const ss = getSS_();
+  const read = readAllArtists_(ss);
+  attachPhotos_(read.artists, readPhotoMap_(ss));
+  const res = {
+    artists: read.artists,
+    missingTabs: read.missing,
+    sheetName: ss.getName(),
+    sheetUrl: ss.getUrl(),
+    loadedAt: new Date().toISOString(),
+  };
+  cachePut_(res);
+  return res;
+}
+
+/** Every artist from every tab in TABS (shared by the portal and the photo tools). */
+function readAllArtists_(ss) {
   const out = [];
   const missing = [];
   TABS.forEach(cfg => {
@@ -70,15 +90,7 @@ function getArtists(force) {
     const links = readRichLinks_(sh, values);
     out.push.apply(out, normalizeTab_(values, cfg, sh.getSheetId(), links));
   });
-  const res = {
-    artists: out,
-    missingTabs: missing,
-    sheetName: ss.getName(),
-    sheetUrl: ss.getUrl(),
-    loadedAt: new Date().toISOString(),
-  };
-  cachePut_(res);
-  return res;
+  return { artists: out, missing: missing };
 }
 
 /**
@@ -236,11 +248,27 @@ function normalizeTab_(values, cfg, gid, richLinks) {
               : /instagram\.com/.test(link) ? 'instagram'
               : /youtu/.test(link) ? 'youtube' : (link ? 'web' : ''),
       remarks: remarks,
+      email: get(row, 'email'),
+      instagram: cleanUrl_(get(row, 'instagram'), 'instagram') || (/instagram\.com/i.test(link) ? link : ''),
+      youtube: cleanUrl_(get(row, 'youtube'), 'youtube') || (/youtu/i.test(link) ? link : ''),
+      website: cleanUrl_(get(row, 'website'), ''),
+      bio: get(row, 'bio'),
+      photo: '',   // filled later from the "Photos" sheet (photos taken from the profile slides)
+      raw: Object.keys(col).reduce((o, f) => { if (f !== 'srno') o[f] = get(row, f); return o; }, {}),
       status: statusOf_(remarks, costRaw),
       extra: extra,
     });
   }
   return rows;
+}
+
+/** "@handle" or "instagram.com/x" -> full https URL */
+function cleanUrl_(v, kind) {
+  v = String(v || '').trim();
+  if (!v) return '';
+  if (kind === 'instagram' && /^@?[\w.]+$/.test(v)) return 'https://www.instagram.com/' + v.replace(/^@/, '') + '/';
+  if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
+  return v;
 }
 
 /** "20k", "15 to 20 k", "1.5 L", "25/35K", "Mumbai - 45k (4 to 5 hr) Outside - 55k", "2L" */
@@ -390,7 +418,7 @@ function statusOf_(remarks, costRaw) {
 /* ======================= ADD ARTIST (frontend -> sheet) ======================= */
 
 // Input type for each form field
-const FIELD_KIND = { link: 'url', cost: 'cost', remarks: 'textarea', phone: 'phone', phone2: 'phone', manager: 'text' };
+const FIELD_KIND = { link: 'url', instagram: 'url', youtube: 'url', website: 'url', email: 'email', cost: 'cost', remarks: 'textarea', bio: 'textarea', phone: 'phone', phone2: 'phone', manager: 'text' };
 
 /** Form per category: that tab's real headers + suggestions. */
 function getFormSchema() {
@@ -497,16 +525,12 @@ function addArtist(payload) {
   }
 }
 
-/** Pure logic (testable): which row, which Sr no, which values. */
-function planInsert_(values, data) {
-  const hm = mapHeader_(values);
-  if (!hm) return { error: 'No header row found in this tab' };
-  const col = hm.col;
+/** Shared by Add and Edit: trims, validates and tidies a form's values. Returns { clean } or { error, field }. */
+function cleanData_(data) {
   const clean = {};
-  Object.keys(data).forEach(k => { const v = String(data[k] == null ? '' : data[k]).trim(); if (v) clean[k] = v; });
-  if (!clean.name && !clean.company) return { error: 'Name (or Company/Band) is required' };
+  Object.keys(data || {}).forEach(k => { const v = String(data[k] == null ? '' : data[k]).trim(); if (v) clean[k] = v; });
+  if (!clean.name && !clean.company) return { error: 'Name (or Company/Band) is required', field: 'name' };
   if (clean.link && !/^https?:\/\//i.test(clean.link)) clean.link = 'https://' + clean.link;
-
   // Phone: a wrong number must never reach the sheet
   for (const k of ['phone', 'phone2']) {
     if (!clean[k]) continue;
@@ -525,6 +549,19 @@ function planInsert_(values, data) {
     }
   }
   if (clean.city) clean.city = cleanCity_(clean.city);
+  if (clean.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)) return { error: 'Email looks wrong (e.g. name@example.com)', field: 'email' };
+  ['instagram', 'youtube', 'website'].forEach(k => { if (clean[k]) clean[k] = cleanUrl_(clean[k], k); });
+  return { clean: clean };
+}
+
+/** Pure logic (testable): which row, which Sr no, which values. */
+function planInsert_(values, data) {
+  const hm = mapHeader_(values);
+  if (!hm) return { error: 'No header row found in this tab' };
+  const col = hm.col;
+  const cd = cleanData_(data);
+  if (cd.error) return cd;
+  const clean = cd.clean;
 
   // Last entry = last row that has a name / company
   let last = hm.h, maxSr = 0, dup = 0;
@@ -572,5 +609,607 @@ function planInsert_(values, data) {
   };
 }
 
+
+/* ============================ PHOTOS ============================ */
+/*
+ * Artist photos come from each artist's own profile slide.
+ *   1. Run "Artist Finder → Extract photos from slides" (menu in the sheet), or run
+ *      extractPhotos() from the Apps Script editor. It keeps going by itself in batches
+ *      and emails you a summary when it is done.
+ *   2. Each photo is saved in the "Artist Photos" Drive folder.
+ *   3. The "Photos" tab keeps one row per artist: which file is their photo, and a status.
+ *      To fix or add a photo by hand, put a Drive link (or file ID) in the
+ *      "Manual photo" column. A manual photo always wins over the one from the slide.
+ */
+const PHOTO_FOLDER_ID = '';   // Drive folder ID where extracted photos are saved (required for photos)
+const PHOTO_TAB = 'Photos';
+const PHOTO_HEADERS = ['Key', 'Category', 'Tab', 'Row', 'Name', 'Slide link', 'Photo file ID', 'Status', 'Updated', 'Manual photo (Drive link or file ID)', 'Photo preview link', 'YouTube (from slide)', 'Instagram (from slide)', 'Other link (from slide)', 'Videos (from slide)', 'Best work (paste a video link to choose)'];
+const PH = { key: 0, cat: 1, tab: 2, row: 3, name: 4, slide: 5, file: 6, status: 7, updated: 8, manual: 9, preview: 10, yt: 11, ig: 12, web: 13, vid: 14, best: 15 };
+const PHOTO_BATCH_MS = 4.5 * 60 * 1000;   // Apps Script stops at 6 min; leave room to save
+
+function onOpen() {
+  try {
+    SpreadsheetApp.getUi().createMenu('Artist Finder')
+      .addItem('Extract photos from slides', 'extractPhotos')
+      .addItem('Update photo list (new artists)', 'syncPhotoList')
+      .addItem('Retry photos that failed', 'retryFailedPhotos')
+      .addSeparator()
+      .addItem('Get videos from slides', 'refreshVideos')
+      .addItem('Re-check all videos (titles, removed videos)', 'recheckAllVideos')
+      .addToUi();
+  } catch (e) { /* not opened from the sheet */ }
+}
+
+/** Same artist = same tab + same name (spaces / case ignored). Row numbers can move, names don't. */
+function photoKey_(tab, name) {
+  return tab + '|' + String(name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** "…/presentation/d/DECK/edit#slide=id.p98" -> { deck: 'DECK', slide: 'p98' } */
+function parseSlideLink_(url) {
+  const d = String(url || '').match(/presentation\/d\/([\w-]+)/);
+  const s = String(url || '').match(/slide=id\.([\w-]+)/);
+  return d ? { deck: d[1], slide: s ? s[1] : null } : null;
+}
+
+/** Drive link / id -> file id */
+function driveId_(v) {
+  v = String(v || '').trim();
+  if (!v) return '';
+  const m = v.match(/\/d\/([\w-]{20,})/) || v.match(/[?&]id=([\w-]{20,})/);
+  if (m) return m[1];
+  return /^[\w-]{20,}$/.test(v) ? v : '';
+}
+
+function photoThumb_(id, size) { return 'https://drive.google.com/thumbnail?id=' + id + '&sz=w' + size; }
+
+/** Pure: given the artists and the current Photos rows, return the new Photos rows. */
+function planPhotoRows_(artists, existing) {
+  const byKey = {};
+  existing.forEach(r => { if (r[PH.key]) byKey[r[PH.key]] = r; });
+  const seen = {};
+  const rows = [];
+  artists.forEach(a => {
+    const key = photoKey_(a.tab, a.name);
+    if (seen[key]) return;            // same name twice in one tab: one photo row
+    seen[key] = true;
+    const old = byKey[key];
+    const slide = a.linkType === 'slides' ? a.link : '';
+    const r = old ? old.slice() : new Array(PHOTO_HEADERS.length).fill('');
+    while (r.length < PHOTO_HEADERS.length) r.push('');
+    r[PH.key] = key; r[PH.cat] = a.cat; r[PH.tab] = a.tab; r[PH.row] = a.row; r[PH.name] = a.name;
+    if (old && /^NOT IN SHEET/.test(r[PH.status])) r[PH.status] = (String(r[PH.status]).match(/\((.*)\)/) || [])[1] || (slide ? 'PENDING' : 'NO SLIDE');
+    const slideChanged = old && String(old[PH.slide]) !== slide;
+    r[PH.slide] = slide;
+    if (!old || slideChanged) {
+      r[PH.file] = slideChanged ? '' : r[PH.file];
+      r[PH.status] = slide ? 'PENDING' : 'NO SLIDE';
+    }
+    if (!slide && !r[PH.file] && r[PH.status] !== 'NO SLIDE') r[PH.status] = 'NO SLIDE';
+    rows.push(r);
+  });
+  // keep rows of artists that disappeared (renamed / removed) at the end, marked, so manual work isn't lost
+  existing.forEach(r => {
+    if (r[PH.key] && !seen[r[PH.key]]) {
+      const k = r.slice(); while (k.length < PHOTO_HEADERS.length) k.push('');
+      if (!/^NOT IN SHEET/.test(k[PH.status])) k[PH.status] = 'NOT IN SHEET (' + (k[PH.status] || '') + ')';
+      rows.push(k);
+    }
+  });
+  return rows;
+}
+
+function photoSheet_(ss) {
+  let sh = ss.getSheetByName(PHOTO_TAB);
+  if (!sh) {
+    sh = ss.insertSheet(PHOTO_TAB);
+    sh.getRange(1, 1, 1, PHOTO_HEADERS.length).setValues([PHOTO_HEADERS])
+      .setFontWeight('bold').setBackground('#C9DAF8').setWrap(true).setVerticalAlignment('middle');
+    sh.setFrozenRows(1);
+    sh.setColumnWidths(1, PHOTO_HEADERS.length, 140);
+    sh.setColumnWidth(PH.name + 1, 190); sh.setColumnWidth(PH.manual + 1, 260); sh.setColumnWidth(PH.preview + 1, 260);
+    sh.hideColumns(PH.key + 1);
+  }
+  // Older Photos tabs: add any new header (columns are only ever added at the end)
+  const have = sh.getRange(1, 1, 1, PHOTO_HEADERS.length).getValues()[0];
+  if (have.join('|') !== PHOTO_HEADERS.join('|')) {
+    sh.getRange(1, 1, 1, PHOTO_HEADERS.length).setValues([PHOTO_HEADERS])
+      .setFontWeight('bold').setBackground('#C9DAF8').setWrap(true).setVerticalAlignment('middle');
+    sh.setColumnWidth(PH.vid + 1, 320); sh.setColumnWidth(PH.best + 1, 260);
+  }
+  return sh;
+}
+
+function readPhotoRows_(sh) {
+  const n = sh.getLastRow() - 1;
+  return n > 0 ? sh.getRange(2, 1, n, PHOTO_HEADERS.length).getValues() : [];
+}
+
+function writePhotoRows_(sh, rows) {
+  const old = sh.getLastRow() - 1;
+  if (old > 0) sh.getRange(2, 1, old, PHOTO_HEADERS.length).clearContent();
+  if (rows.length) sh.getRange(2, 1, rows.length, PHOTO_HEADERS.length).setValues(rows);
+}
+
+/** Menu: add new artists to the Photos tab, update rows/slide links. Never deletes. */
+function syncPhotoList() {
+  const ss = getSS_();
+  const sh = photoSheet_(ss);
+  const rows = planPhotoRows_(readAllArtists_(ss).artists, readPhotoRows_(sh));
+  writePhotoRows_(sh, rows);
+  clearArtistCache_();
+  return rows.length;
+}
+
+/** All URLs written on a slide (text and hyperlinks) */
+function slideUrls_(slide) {
+  const urls = [];
+  const add = u => { u = String(u || '').trim().replace(/[)\].,;]+$/, ''); if (/^https?:\/\//i.test(u) && urls.indexOf(u) < 0) urls.push(u); };
+  (function walk(els) {
+    els.forEach(el => {
+      const t = el.getPageElementType();
+      if (t === SlidesApp.PageElementType.GROUP) return walk(el.asGroup().getChildren());
+      if (t !== SlidesApp.PageElementType.SHAPE) return;
+      const tr = el.asShape().getText();
+      (tr.asString().match(/https?:\/\/[^\s]+/g) || []).forEach(add);
+      try { tr.getLinks().forEach(l => { const k = l.getTextStyle().getLink(); if (k && k.getUrl()) add(k.getUrl()); }); } catch (e) {}
+    });
+  })(slide.getPageElements());
+  return urls;
+}
+
+/** Pure: sort a slide's URLs into YouTube (channel first), Instagram, other */
+function pickLinks_(urls) {
+  const yt = urls.filter(u => /youtu\.?be/i.test(u));
+  const ytChannel = yt.find(u => /youtube\.com\/(@|channel\/|c\/|user\/)/i.test(u));
+  const ig = urls.find(u => /instagram\.com/i.test(u)) || '';
+  const other = urls.find(u => !/youtu\.?be|instagram\.com|docs\.google\.com|drive\.google\.com/i.test(u)) || '';
+  return { youtube: ytChannel || yt[0] || '', instagram: ig, other: other };
+}
+
+function slideLinks_(slide) { return pickLinks_(slideUrls_(slide)); }
+
+/** Choose the artist photo on a slide: the biggest picture that is not a full-slide background. */
+function pickSlideImage_(slide, pageW, pageH) {
+  const imgs = [];
+  (function walk(els) {
+    els.forEach(el => {
+      const t = el.getPageElementType();
+      if (t === SlidesApp.PageElementType.IMAGE) imgs.push(el.asImage());
+      else if (t === SlidesApp.PageElementType.GROUP) walk(el.asGroup().getChildren());
+    });
+  })(slide.getPageElements());
+  let best = null, bestScore = 0;
+  imgs.forEach(img => {
+    const w = img.getWidth(), h = img.getHeight();
+    if (w < 40 || h < 40) return;                                  // icons, logos
+    if (w >= pageW * 0.9 && h >= pageH * 0.9) return;              // background
+    const ratio = w / h;
+    const score = w * h * (ratio >= 0.45 && ratio <= 1.8 ? 1 : 0.4); // portraits / squares first
+    if (score > bestScore) { best = img; bestScore = score; }
+  });
+  return best;
+}
+
+/** Menu: pull photos from slides for every PENDING artist. Continues by itself until done. */
+function extractPhotos() {
+  const started = Date.now();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return 'Already running';
+  try {
+    const ss = getSS_();
+    const sh = photoSheet_(ss);
+    let rows = planPhotoRows_(readAllArtists_(ss).artists, readPhotoRows_(sh));
+    writePhotoRows_(sh, rows);
+    const folder = DriveApp.getFolderById(PHOTO_FOLDER_ID);
+    try { folder.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { /* admin policy */ }
+
+    const decks = {};          // deckId -> { pres, w, h } or { error }
+    let done = 0, sinceSave = 0, timedOut = false;
+    const stamp = () => Utilities.formatDate(new Date(), 'Asia/Kolkata', 'dd/MM/yyyy HH:mm');
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (r[PH.status] !== 'PENDING') continue;
+      if (Date.now() - started > PHOTO_BATCH_MS) { timedOut = true; break; }
+      const p = parseSlideLink_(r[PH.slide]);
+      try {
+        if (!p) throw new Error('BAD LINK');
+        if (!decks[p.deck]) {
+          try {
+            const pres = SlidesApp.openById(p.deck);
+            decks[p.deck] = { pres: pres, w: pres.getPageWidth(), h: pres.getPageHeight() };
+          } catch (e) { decks[p.deck] = { error: 'NO ACCESS TO DECK' }; }
+        }
+        const d = decks[p.deck];
+        if (d.error) throw new Error(d.error);
+        const slide = p.slide ? d.pres.getSlideById(p.slide) : null;
+        if (!slide) throw new Error('SLIDE NOT FOUND');
+        const links = slideLinks_(slide);
+        r[PH.yt] = links.youtube; r[PH.ig] = links.instagram; r[PH.web] = links.other;
+        if (String(r[PH.vid]).trim() === '') {
+          try { const v = buildVideoList_(slideLinkItems_(slide), [], ytInfo_); r[PH.vid] = JSON.stringify(v.videos); if (v.channel) r[PH.yt] = v.channel; } catch (e) {}
+        }
+        const img = pickSlideImage_(slide, d.w, d.h);
+        if (!img) throw new Error('NO PHOTO ON SLIDE');
+        const blob = img.getBlob();
+        const ext = (blob.getContentType() || '').indexOf('png') >= 0 ? '.png' : '.jpg';
+        const file = folder.createFile(blob.setName(r[PH.cat] + ' - ' + r[PH.name] + ext));
+        r[PH.file] = file.getId();
+        r[PH.status] = 'OK';
+        r[PH.preview] = 'https://drive.google.com/file/d/' + file.getId() + '/view';
+      } catch (e) {
+        r[PH.status] = String(e.message || e).slice(0, 60);
+      }
+      r[PH.updated] = stamp();
+      done++; sinceSave++;
+      if (sinceSave >= 15) { writePhotoRows_(sh, rows); sinceSave = 0; }
+    }
+    writePhotoRows_(sh, rows);
+    clearArtistCache_();
+
+    ScriptApp.getProjectTriggers().forEach(t => { if (t.getHandlerFunction() === 'extractPhotos') ScriptApp.deleteTrigger(t); });
+    if (timedOut) {
+      ScriptApp.newTrigger('extractPhotos').timeBased().after(60 * 1000).create();
+      return 'Batch done (' + done + '). Continuing automatically in 1 minute.';
+    }
+    const count = {};
+    rows.forEach(r => { const s = String(r[PH.status]).replace(/ \(.*/, ''); count[s] = (count[s] || 0) + 1; });
+    const lines = Object.keys(count).sort().map(k => k + ': ' + count[k]);
+    try {
+      MailApp.sendEmail(Session.getEffectiveUser().getEmail(), 'Artist Finder: photo extraction finished',
+        'Photos from slides are done.\n\n' + lines.join('\n') +
+        '\n\nOpen the "Photos" tab to check them. To fix or add a photo, paste a Drive link in the "Manual photo" column.\n' + ss.getUrl());
+    } catch (e) {}
+    return 'Finished. ' + lines.join(', ');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Menu: put failed rows (except NO SLIDE) back to PENDING and run again. */
+function retryFailedPhotos() {
+  const ss = getSS_();
+  const sh = photoSheet_(ss);
+  const rows = readPhotoRows_(sh);
+  rows.forEach(r => {
+    const s = String(r[PH.status]);
+    if (s && s !== 'OK' && s !== 'NO SLIDE' && s !== 'PENDING' && !/^NOT IN SHEET/.test(s) && r[PH.slide]) r[PH.status] = 'PENDING';
+  });
+  writePhotoRows_(sh, rows);
+  return extractPhotos();
+}
+
+/**
+ * Photos are sent to the portal by the script itself (as data URLs), so they show even when
+ * a browser blocks Google's login cookies inside the app. Small thumbnails are cached for 6 hours.
+ * Called by the frontend with the IDs of the cards on screen.
+ */
+function getThumbs(ids) {
+  const cache = CacheService.getScriptCache();
+  const out = {};
+  const keys = (ids || []).slice(0, 40).map(id => 'th_' + id);
+  const hit = keys.length ? cache.getAll(keys) : {};
+  const put = {};
+  (ids || []).slice(0, 40).forEach(id => {
+    if (hit['th_' + id]) { out[id] = hit['th_' + id]; return; }
+    try {
+      const file = DriveApp.getFileById(id);
+      let blob = null;
+      try { blob = file.getThumbnail(); } catch (e) {}
+      if (!blob || blob.getBytes().length < 200) blob = file.getBlob();
+      const bytes = blob.getBytes();
+      if (bytes.length > 600000) { out[id] = ''; return; }   // too big for a thumbnail; zoom still works
+      const url = 'data:' + (blob.getContentType() || 'image/jpeg') + ';base64,' + Utilities.base64Encode(bytes);
+      out[id] = url;
+      if (url.length < 95000) put['th_' + id] = url;
+    } catch (e) { out[id] = ''; }
+  });
+  try { if (Object.keys(put).length) cache.putAll(put, 6 * 60 * 60); } catch (e) {}
+  return out;
+}
+
+/** Full-size photo for the zoom view. */
+function getPhotoLarge(id) {
+  try {
+    const blob = DriveApp.getFileById(id).getBlob();
+    return 'data:' + (blob.getContentType() || 'image/jpeg') + ';base64,' + Utilities.base64Encode(blob.getBytes());
+  } catch (e) { return ''; }
+}
+
+/** key -> file id (manual photo beats the slide photo) */
+function readPhotoMap_(ss) {
+  const sh = ss.getSheetByName(PHOTO_TAB);
+  const map = {};
+  if (!sh) return map;
+  readPhotoRows_(sh).forEach(r => {
+    if (!r[PH.key]) return;
+    const id = driveId_(r[PH.manual]) || (String(r[PH.status]) === 'OK' ? String(r[PH.file]) : '');
+    map[r[PH.key]] = { id: id, yt: String(r[PH.yt] || ''), ig: String(r[PH.ig] || ''), web: String(r[PH.web] || ''),
+                       vids: parseVids_(r[PH.vid]) || [], best: String(r[PH.best] || '') };
+  });
+  return map;
+}
+
+/**
+ * Pure: put photo, videos and channel on the artists.
+ *   a.photoId, a.videos [{id, title, embed}], a.best (index into videos), a.channel
+ * The artist's own sheet columns win over links found on the slide.
+ */
+function attachPhotos_(artists, map) {
+  artists.forEach(a => {
+    const p = map[photoKey_(a.tab, a.name)] || { vids: [] };
+    if (p.id) a.photoId = p.id;
+    if (!a.website && p.web) a.website = p.web;
+    // channel: sheet YouTube column if it is a channel, else the slide's channel
+    const sheetYt = a.youtube || '';
+    a.channel = isYtChannel_(sheetYt) ? sheetYt : (isYtChannel_(p.yt) ? p.yt : '');
+    const vids = [];
+    const sheetVid = ytId_(sheetYt);
+    if (sheetVid) vids.push({ id: sheetVid, title: 'Showreel', embed: true });
+    (p.vids || []).forEach(v => {
+      if (!v || !v.id || v.x || vids.some(x => x.id === v.id)) return;
+      vids.push({ id: v.id, title: v.l || v.t || '', embed: v.e !== 0 });
+    });
+    vids.forEach((v, i) => { if (!v.title) v.title = 'Video ' + (i + 1); });
+    const bestId = ytId_(p.best);
+    let best = bestId ? vids.findIndex(v => v.id === bestId) : 0;
+    if (bestId && best < 0) { vids.unshift({ id: bestId, title: 'Best work', embed: true }); best = 0; }
+    a.videos = vids;
+    a.best = vids.length ? Math.max(0, best) : -1;
+    delete a.instagram;   // not shown on the card
+  });
+  return artists;
+}
+
+/* ============================ VIDEOS ============================ */
+/*
+ * Videos come from the YouTube links on each artist's profile slide.
+ *   - If the team hyperlinks text on the slide ("Infosys Award Night"), that text is the video's name.
+ *   - Otherwise the video's own YouTube title is used (free oEmbed lookup, no key).
+ *   - "Best work" = the first video, unless a video link is pasted in the Photos tab's
+ *     "Best work" column.
+ *   - Videos whose owner turned off playing on other sites open on YouTube instead of the popup.
+ * Stored in the Photos tab, column "Videos (from slide)", as a short JSON list.
+ */
+
+/** YouTube video id from any link form; '' for channels / non-video links */
+function ytId_(u) {
+  const m = String(u || '').match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/);
+  return m ? m[1] : '';
+}
+function isYtChannel_(u) { return /youtube\.com\/(@|channel\/|c\/|user\/)/i.test(String(u || '')); }
+
+/** Every link on a slide with the text it sits on: [{ url, label }] */
+function slideLinkItems_(slide) {
+  const items = [];
+  const add = (u, label) => {
+    u = String(u || '').trim().replace(/[)\].,;]+$/, '');
+    if (!/^https?:\/\//i.test(u)) return;
+    label = String(label || '').replace(/\s+/g, ' ').trim();
+    if (/^https?:\/\//i.test(label) || /^(link|links|video|click here)\s*:?$/i.test(label)) label = '';
+    const old = items.find(x => x.url === u);
+    if (old) { if (!old.label && label) old.label = label; return; }
+    items.push({ url: u, label: label });
+  };
+  (function walk(els) {
+    els.forEach(el => {
+      const t = el.getPageElementType();
+      if (t === SlidesApp.PageElementType.GROUP) return walk(el.asGroup().getChildren());
+      if (t === SlidesApp.PageElementType.IMAGE) { try { const l = el.asImage().getLink(); if (l && l.getUrl()) add(l.getUrl(), ''); } catch (e) {} return; }
+      if (t !== SlidesApp.PageElementType.SHAPE) return;
+      const tr = el.asShape().getText();
+      try { tr.getLinks().forEach(seg => { const k = seg.getTextStyle().getLink(); if (k && k.getUrl()) add(k.getUrl(), seg.asString()); }); } catch (e) {}
+      (tr.asString().match(/https?:\/\/[^\s]+/g) || []).forEach(u => add(u, ''));
+    });
+  })(slide.getPageElements());
+  return items;
+}
+
+/** Free YouTube lookup: title, and whether it may play inside the portal */
+function ytInfo_(id) {
+  try {
+    const res = UrlFetchApp.fetch('https://www.youtube.com/oembed?format=json&url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id), { muteHttpExceptions: true });
+    const code = res.getResponseCode();
+    if (code === 200) { const j = JSON.parse(res.getContentText()); return { t: String(j.title || '').slice(0, 120), e: 1 }; }
+    if (code === 401 || code === 403) return { t: '', e: 0 };          // owner turned off embedding
+    if (code === 404 || code === 400) return { t: '', e: 0, x: 1 };    // removed or private
+  } catch (e) {}
+  return { t: '', e: 1 };                                              // unknown: try the popup
+}
+
+/** Pure: link items -> { channel, videos:[{id,l,t,e,x}] }, reusing earlier lookups. lookup(id) is ytInfo_ (or a test stub). */
+function buildVideoList_(items, oldList, lookup) {
+  const old = {};
+  (oldList || []).forEach(v => { if (v && v.id) old[v.id] = v; });
+  const out = [], seen = {};
+  let channel = '';
+  items.forEach(it => {
+    if (isYtChannel_(it.url)) { if (!channel) channel = it.url; return; }
+    const id = ytId_(it.url);
+    if (!id || seen[id]) return;
+    seen[id] = true;
+    const prev = old[id];
+    const info = prev ? { t: prev.t, e: prev.e, x: prev.x } : lookup(id);
+    const v = { id: id, l: it.label || '', t: info.t || '', e: info.e === 0 ? 0 : 1 };
+    if (info.x) v.x = 1;
+    out.push(v);
+  });
+  return { channel: channel, videos: out };
+}
+
+function parseVids_(cell) {
+  try { const v = JSON.parse(String(cell || '')); return Array.isArray(v) ? v : null; } catch (e) { return null; }
+}
+
+/** Menu: read videos from every slide that hasn't been read yet. Continues by itself until done. */
+function refreshVideos() {
+  const started = Date.now();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return 'Already running';
+  try {
+    const ss = getSS_();
+    const sh = photoSheet_(ss);
+    const rows = planPhotoRows_(readAllArtists_(ss).artists, readPhotoRows_(sh));
+    const decks = {};
+    let done = 0, timedOut = false, sinceSave = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r[PH.slide] || String(r[PH.vid]).trim() !== '') continue;   // no slide, or already read
+      if (Date.now() - started > PHOTO_BATCH_MS) { timedOut = true; break; }
+      const p = parseSlideLink_(r[PH.slide]);
+      let list = [];
+      try {
+        if (p && p.slide) {
+          if (!decks[p.deck]) { try { decks[p.deck] = { pres: SlidesApp.openById(p.deck) }; } catch (e) { decks[p.deck] = { error: 1 }; } }
+          const d = decks[p.deck];
+          const slide = d.pres ? d.pres.getSlideById(p.slide) : null;
+          if (slide) {
+            const v = buildVideoList_(slideLinkItems_(slide), [], ytInfo_);
+            list = v.videos;
+            if (v.channel) r[PH.yt] = v.channel;
+          }
+        }
+      } catch (e) {}
+      r[PH.vid] = JSON.stringify(list);
+      done++; sinceSave++;
+      if (sinceSave >= 25) { writePhotoRows_(sh, rows); sinceSave = 0; }
+    }
+    writePhotoRows_(sh, rows);
+    clearArtistCache_();
+    ScriptApp.getProjectTriggers().forEach(t => { if (t.getHandlerFunction() === 'refreshVideos') ScriptApp.deleteTrigger(t); });
+    if (timedOut) {
+      ScriptApp.newTrigger('refreshVideos').timeBased().after(60 * 1000).create();
+      return 'Batch done (' + done + '). Continuing automatically in 1 minute.';
+    }
+    const withVid = rows.filter(r => (parseVids_(r[PH.vid]) || []).length).length;
+    try {
+      MailApp.sendEmail(Session.getEffectiveUser().getEmail(), 'Artist Finder: videos finished',
+        'Videos from slides are done. Artists with at least one video: ' + withVid + '.\n\n' +
+        'To choose a different "Best work", paste that video\'s link in the Photos tab, column "Best work".\n' + ss.getUrl());
+    } catch (e) {}
+    return 'Finished. Artists with videos: ' + withVid;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Menu: read every slide's videos again (new links, new names, removed videos). */
+function recheckAllVideos() {
+  const ss = getSS_();
+  const sh = photoSheet_(ss);
+  const rows = readPhotoRows_(sh);
+  rows.forEach(r => { if (r[PH.slide]) r[PH.vid] = ''; });
+  writePhotoRows_(sh, rows);
+  return refreshVideos();
+}
+
+/* ============================ EDIT ARTIST ============================ */
+const EDIT_LOG_TAB = 'Edit Log';
+
+/**
+ * Pure (testable): find the row to edit and work out the new cell values.
+ * values = the tab's display values; row = 1-based row the portal showed; origName = name the portal showed.
+ * Returns { row, updates: [[col0, newValue]], changes: [[field, old, new]], nameCol } or { error }.
+ */
+function planEdit_(values, row, origName, data) {
+  const hm = mapHeader_(values);
+  if (!hm) return { error: 'No header row found in this tab' };
+  const col = hm.col;
+  const norm = v => String(v || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const nameAt = r => {
+    const v = values[r - 1] || [];
+    return norm(col.name !== undefined && String(v[col.name] || '').trim() ? v[col.name] : (col.company !== undefined ? v[col.company] : ''));
+  };
+  // The row may have moved if someone inserted/deleted rows in the sheet: check, then search by name
+  let target = row;
+  if (!(target > hm.h + 1 && target <= values.length && nameAt(target) === norm(origName))) {
+    target = 0;
+    for (let r = hm.h + 2; r <= values.length; r++) if (nameAt(r) === norm(origName)) { target = r; break; }
+    if (!target) return { error: '"' + origName + '" was not found in this tab any more. Refresh the portal and try again.' };
+  }
+  const old = values[target - 1] || [];
+  const oldOf = k => String(old[col[k]] == null ? '' : old[col[k]]).trim();
+  // Only fields the user actually changed are checked and written (old messy cells are left alone)
+  const changed = {};
+  Object.keys(data || {}).forEach(k => {
+    if (col[k] === undefined || k === 'srno') return;
+    if (String(data[k] == null ? '' : data[k]).trim() !== oldOf(k)) changed[k] = data[k];
+  });
+  const base = {};
+  ['name', 'company'].forEach(k => { if (col[k] !== undefined) base[k] = k in changed ? changed[k] : oldOf(k); });
+  const cd = cleanData_(Object.assign({}, base, changed));
+  if (cd.error) return cd;
+  const clean = cd.clean;
+  const updates = [], changes = [];
+  Object.keys(changed).forEach(k => {
+    const nv = clean[k] || '';
+    if (nv !== oldOf(k)) { updates.push([col[k], nv]); changes.push([k, oldOf(k), nv]); }
+  });
+  const nameCol = col.name !== undefined ? col.name : col.company;
+  const newName = (col.name !== undefined ? clean.name : clean.company) || '';
+  return { row: target, updates: updates, changes: changes, nameCol: nameCol, newName: newName, oldName: String(old[nameCol] || '').trim() };
+}
+
+/** Frontend: updateArtist({cat, row, origName, data}) */
+function updateArtist(payload) {
+  const cfg = TABS.filter(t => t.cat === payload.cat)[0];
+  if (!cfg) throw new Error('Category not found: ' + payload.cat);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const ss = getSS_();
+    const sh = ss.getSheetByName(cfg.tab);
+    if (!sh) throw new Error('Tab not found: ' + cfg.tab);
+    const values = sh.getDataRange().getDisplayValues();
+    const plan = planEdit_(values, payload.row, payload.origName, payload.data || {});
+    if (plan.error) throw new Error(plan.error);
+    if (!plan.updates.length) return { ok: true, unchanged: true, row: plan.row, gid: sh.getSheetId(), nameCol: plan.nameCol + 1 };
+
+    const hm = mapHeader_(values);
+    plan.updates.forEach(u => {
+      const cell = sh.getRange(plan.row, u[0] + 1);
+      if ([hm.col.phone, hm.col.phone2, hm.col.manager].indexOf(u[0]) >= 0) cell.setNumberFormat('@');
+      cell.setValue(u[1]);
+    });
+
+    let who = '';
+    try { who = Session.getActiveUser().getEmail(); } catch (e) {}
+    const when = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'dd/MM/yyyy HH:mm');
+    const nameCell = sh.getRange(plan.row, plan.nameCol + 1);
+    const note = (nameCell.getNote() || '').split('\n').filter(l => !/^Edited /.test(l));
+    note.push('Edited via Artist Finder' + (who ? ' by ' + who : '') + ' on ' + when);
+    nameCell.setNote(note.filter(Boolean).join('\n'));
+
+    // Edit Log: one line per changed field, so any edit can be checked or undone
+    let log = ss.getSheetByName(EDIT_LOG_TAB);
+    if (!log) {
+      log = ss.insertSheet(EDIT_LOG_TAB);
+      log.getRange(1, 1, 1, 8).setValues([['When', 'Who', 'Tab', 'Row', 'Artist', 'Field', 'Old value', 'New value']]).setFontWeight('bold').setBackground('#C9DAF8');
+      log.setFrozenRows(1);
+    }
+    const rows = plan.changes.map(ch => [when, who, cfg.tab, plan.row, plan.newName || plan.oldName, ch[0], ch[1], ch[2]]);
+    log.getRange(log.getLastRow() + 1, 1, rows.length, 8).setValues(rows);
+
+    // Renamed? keep the artist's photo
+    if (plan.newName && plan.oldName && photoKey_(cfg.tab, plan.newName) !== photoKey_(cfg.tab, plan.oldName)) renamePhotoKey_(ss, cfg.tab, plan.oldName, plan.newName);
+
+    clearArtistCache_();
+    return { ok: true, row: plan.row, gid: sh.getSheetId(), nameCol: plan.nameCol + 1, changed: plan.changes.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function renamePhotoKey_(ss, tab, oldName, newName) {
+  const sh = ss.getSheetByName(PHOTO_TAB);
+  if (!sh) return;
+  const rows = readPhotoRows_(sh);
+  const k = photoKey_(tab, oldName);
+  let hit = false;
+  rows.forEach(r => { if (r[PH.key] === k) { r[PH.key] = photoKey_(tab, newName); r[PH.name] = newName; hit = true; } });
+  if (hit) writePhotoRows_(sh, rows);
+}
+
 // For local Node tests (ignored by Apps Script)
-if (typeof module !== 'undefined') module.exports = { checkPhone_, cleanCity_, allCities_, normalizeTab_, parseCost_, extractPhones_, TABS, buildSchema_, planInsert_, mapHeader_ };
+if (typeof module !== 'undefined') module.exports = { buildVideoList_, ytId_, isYtChannel_, parseVids_, planEdit_, cleanData_, pickLinks_, readPhotoMap_, planPhotoRows_, parseSlideLink_, driveId_, photoKey_, attachPhotos_, PH, PHOTO_HEADERS, checkPhone_, cleanCity_, allCities_, normalizeTab_, parseCost_, extractPhones_, TABS, buildSchema_, planInsert_, mapHeader_ };

@@ -3,10 +3,12 @@
 Internal portal + installable app for the **CRES artist master database** (Google Sheet).
 
 - **Search** artists across all categories — name, band, city, act type, remarks
-- **Filter** by category, city, budget, status (cost updated / follow-up), phone/link
+- **Filter** by category, city, budget, status (cost updated / follow-up), phone / link / photo / video
 - **Shortlist** artists and copy the list for WhatsApp / mail (with or without contacts)
 - **Add artist** from a form — written to the right tab, right below the last entry, with the next Sr no
-- **Edit ↗** opens the sheet directly at the artist's name cell
+- **✎ Edit** an artist right in the portal (only changed fields are written; every edit is noted on the cell and in an `Edit Log` tab) — **Sheet ↗** opens the exact cell
+- **Photos** on every card, taken from each artist's own profile slide (click to zoom)
+- **Videos** at the bottom of the card: ★ Best work plays in a popup inside the portal, plus *More videos*, YouTube channel and Profile slide
 - Phone validation (Indian + international), city name clean-up, duplicate check
 
 Data is always **live from the sheet** — nothing is stored in this repo or in the app.
@@ -48,6 +50,27 @@ Installable app (GitHub Pages) ← index.html + manifest.json + sw.js + icons/
 
 Saving alone does **not** update the live link — always deploy a *New version*.
 Using "New version" keeps the same URL, so the app needs no change.
+
+## Photos and videos
+
+Set `PHOTO_FOLDER_ID` in `Code.gs` (a Drive folder for the photos), then use the sheet menu **🎤 Artist Finder**:
+
+| Menu item | What it does |
+|---|---|
+| Extract photos from slides | Saves the main photo from each artist's slide into the folder and lists it in the `Photos` tab |
+| Update photo list | Adds new artists to the `Photos` tab |
+| Retry failed photos | Tries the failed ones again |
+| Get videos from slides | Reads the YouTube links on each slide (link text = video title) and checks if each video can play inside the portal |
+| Re-check all videos | Checks again for removed / blocked videos |
+
+In the `Photos` tab:
+- **Manual photo** — paste a Drive link to use your own photo.
+- **Best work** — paste one video link to make it the ★ Best work. Empty = first video.
+- A YouTube *video* link in the sheet's YouTube column shows as **Showreel**; a *channel* link shows as **YouTube channel**.
+
+Videos whose owner has blocked embedding open on YouTube instead of the popup. Video titles and checks use YouTube's free oEmbed — no API key, no cost.
+
+Long runs continue by themselves (time trigger) and send an email when done.
 
 ## Speed
 
